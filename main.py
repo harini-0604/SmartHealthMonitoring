@@ -2,9 +2,9 @@ from datetime import datetime
 from pathlib import Path
 
 from emergency.voice_assistant import run_voice_check
-from ai.person_detection import run_person_detection
-from pose.pose_detection import run_pose_detection
-from ai.fall_detection import run_fall_detection
+from detection.person_detection import run_person_detection
+from detection.pose_detection import run_pose_detection
+from detection.fall_detection import run_fall_detection
 
 
 # ============================================================
