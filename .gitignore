@@ -1,0 +1,22 @@
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Logs
+logs/
+
+# VS Code
+.vscode/
+
+# Environment variables
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Large/generated project files
+project_structure.txt
+yolo11n.pt
