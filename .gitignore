@@ -19,4 +19,5 @@ logs/
 
 # Large/generated project files
 project_structure.txt
-yolo11n.ptsmart_health.db
+yolo11n.pt
+smart_health.db
