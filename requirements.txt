@@ -1,6 +1,7 @@
 opencv-python
+mediapipe==0.10.14
 ultralytics
-mediapipe
-SpeechRecognition
-pyttsx3
-PyAudio
+streamlit
+pandas
+numpy
+Pillow
