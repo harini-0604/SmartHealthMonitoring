@@ -148,37 +148,46 @@ STATUS: POSSIBLE EMERGENCY DETECTED
 
 Project Structure
 
-SmartHealthMonitoring/
-│
-├── ai/
-│   ├── person_detection.py
-│   └── fall_detection.py
-│
-├── camera/
-│
-├── emergency/
-│   ├── voice_assistant.py
-│   └── emergency_manager.py
-│
-├── pose/
-│   └── pose_detection.py
-│
-├── main.py
-├── mic_test.py
-├── requirements.txt
-├── README.md
-└── .gitignore
+The project is organized into separate modules for AI processing, pose estimation, emergency handling, and system control.
 
-Generated/Local Files
+Main Folders
 
-Some files are intentionally excluded from GitHub:
+- ai/
+  
+  - "person_detection.py" — Detects people using YOLO.
+  - "fall_detection.py" — Detects possible falls using computer vision and pose information.
 
-venv/
-logs/
-yolo11n.pt
-project_structure.txt
+- camera/
+  
+  - Contains camera-related components.
 
-These are excluded using ".gitignore".
+- emergency/
+  
+  - "voice_assistant.py" — Handles voice-based emergency checking.
+  - "emergency_manager.py" — Processes and records emergency events.
+
+- pose/
+  
+  - "pose_detection.py" — Performs human pose estimation using MediaPipe.
+
+Main Files
+
+- "main.py" — Main controller and menu system.
+- "mic_test.py" — Microphone testing utility.
+- "requirements.txt" — Python dependencies.
+- "README.md" — Project documentation.
+- ".gitignore" — Files excluded from Git tracking.
+
+Local / Generated Files
+
+The following files are intentionally excluded from GitHub:
+
+- "venv/" — Python virtual environment.
+- "logs/" — Local monitoring and emergency logs.
+- "yolo11n.pt" — YOLO model file.
+- "project_structure.txt" — Generated project structure reference.
+
+These files are excluded using ".gitignore".
 
 ---
 
