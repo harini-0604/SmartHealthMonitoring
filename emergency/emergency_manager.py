@@ -1,6 +1,9 @@
 from datetime import datetime
 from pathlib import Path
 
+from database.database import save_incident
+from database.models import Incident
+
 
 # ============================================================
 # LOG FILE
@@ -49,18 +52,12 @@ def handle_emergency(
 
     try:
 
-        with open(
-            LOG_FILE,
-            "a",
-            encoding="utf-8"
-        ) as file:
-
-            file.write(
-                f"{timestamp} | "
-                f"SOURCE: {source} | "
-                f"REASON: {reason} | "
-                f"STATUS: POSSIBLE EMERGENCY DETECTED\n"
-            )
+        incident = Incident(
+            timestamp=timestamp,
+            source=source,
+            reason=reason,
+            status="POSSIBLE EMERGENCY"
+        )
 
     except Exception as error:
 
