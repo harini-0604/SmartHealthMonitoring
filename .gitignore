@@ -21,3 +21,6 @@ logs/
 project_structure.txt
 yolo11n.pt
 smart_health.db
+
+# Encrypted configuration
+.enc

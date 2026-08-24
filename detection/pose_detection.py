@@ -226,21 +226,6 @@ def run_pose_detection():
 
 
             # ------------------------------------------------
-            # Display posture information
-            # ------------------------------------------------
-
-            cv2.putText(
-                frame,
-                f"Body angle: {angle:.1f}",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 0),
-                2
-            )
-
-
-            # ------------------------------------------------
             # Draw skeleton
             # ------------------------------------------------
 
@@ -248,23 +233,6 @@ def run_pose_detection():
                 frame,
                 landmarks,
                 mp_pose.POSE_CONNECTIONS
-            )
-
-
-        # ====================================================
-        # NO POSE
-        # ====================================================
-
-        else:
-
-            cv2.putText(
-                frame,
-                "No pose detected",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
             )
 
 
@@ -312,3 +280,110 @@ def run_pose_detection():
 if __name__ == "__main__":
 
     run_pose_detection()
+
+# ============================================================
+# REAL-TIME FRAME POSE DETECTION
+# ============================================================
+
+def process_pose_frame(
+    frame,
+    pose
+):
+
+    mp_pose = mp.solutions.pose
+    mp_drawing = mp.solutions.drawing_utils
+
+    rgb_frame = cv2.cvtColor(
+        frame,
+        cv2.COLOR_BGR2RGB
+    )
+
+    results = pose.process(
+        rgb_frame
+    )
+
+    pose_detected = False
+    body_angle = None
+
+    if results.pose_landmarks:
+
+        pose_detected = True
+
+        landmarks = results.pose_landmarks
+
+        def get_landmark(
+            landmark_name
+        ):
+
+            landmark_id = getattr(
+                mp_pose.PoseLandmark,
+                landmark_name
+            )
+
+            point = landmarks.landmark[
+                landmark_id
+            ]
+
+            return (
+                point.x,
+                point.y,
+                point.z,
+                point.visibility
+            )
+
+        left_shoulder = get_landmark(
+            "LEFT_SHOULDER"
+        )
+
+        right_shoulder = get_landmark(
+            "RIGHT_SHOULDER"
+        )
+
+        left_hip = get_landmark(
+            "LEFT_HIP"
+        )
+
+        right_hip = get_landmark(
+            "RIGHT_HIP"
+        )
+
+        shoulder_x = (
+            left_shoulder[0]
+            + right_shoulder[0]
+        ) / 2
+
+        shoulder_y = (
+            left_shoulder[1]
+            + right_shoulder[1]
+        ) / 2
+
+        hip_x = (
+            left_hip[0]
+            + right_hip[0]
+        ) / 2
+
+        hip_y = (
+            left_hip[1]
+            + right_hip[1]
+        ) / 2
+
+        dx = hip_x - shoulder_x
+        dy = hip_y - shoulder_y
+
+        body_angle = math.degrees(
+            math.atan2(dy, dx)
+        )
+
+        mp_drawing.draw_landmarks(
+            frame,
+            landmarks,
+            mp_pose.POSE_CONNECTIONS
+        )
+
+    
+
+    return (
+        frame,
+        pose_detected,
+        body_angle
+    )

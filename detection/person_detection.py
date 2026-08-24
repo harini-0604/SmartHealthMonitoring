@@ -227,22 +227,6 @@ def run_person_detection():
             2
         )
 
-
-        # ----------------------------------------------------
-        # DISPLAY CONFIDENCE SETTINGS
-        # ----------------------------------------------------
-
-        cv2.putText(
-            annotated_frame,
-            f"Confidence: {CONFIDENCE_THRESHOLD:.2f}",
-            (20, 75),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.65,
-            (255, 255, 255),
-            2
-        )
-
-
         # ----------------------------------------------------
         # DISPLAY CAMERA
         # ----------------------------------------------------
@@ -285,3 +269,83 @@ def run_person_detection():
 if __name__ == "__main__":
 
     run_person_detection()
+
+# ============================================================
+# REAL-TIME FRAME PERSON DETECTION
+# ============================================================
+
+def process_person_frame(
+    frame,
+    model,
+    previous_count=0,
+    stable_count=0,
+    last_detected_count=0
+):
+
+    results = model(
+        frame,
+        classes=[0],
+        conf=CONFIDENCE_THRESHOLD,
+        verbose=False
+    )
+
+    detected_person_count = 0
+
+    for result in results:
+
+        for box in result.boxes:
+
+            class_id = int(box.cls[0])
+            confidence = float(box.conf[0])
+
+            if class_id == 0 and confidence >= 0.60:
+
+                detected_person_count += 1
+
+    # --------------------------------------------------------
+    # STABLE DETECTION
+    # --------------------------------------------------------
+
+    if detected_person_count == last_detected_count:
+
+        stable_count += 1
+
+    else:
+
+        stable_count = 1
+        last_detected_count = detected_person_count
+
+    if stable_count >= STABLE_FRAMES_REQUIRED:
+
+        person_count = detected_person_count
+
+    else:
+
+        person_count = previous_count
+
+    # --------------------------------------------------------
+    # ANNOTATED FRAME
+    # --------------------------------------------------------
+
+    annotated_frame = results[0].plot(
+        labels=False,
+        conf=False
+    )
+
+
+    cv2.putText(
+        annotated_frame,
+        f"People: {person_count}",
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
+
+    return (
+        annotated_frame,
+        person_count,
+        stable_count,
+        last_detected_count
+    )

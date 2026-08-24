@@ -4,22 +4,9 @@ from pathlib import Path
 from database.database import save_incident
 from database.models import Incident
 
-
-# ============================================================
-# LOG FILE
-# ============================================================
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-
-LOG_FOLDER = PROJECT_ROOT / "logs"
-LOG_FILE = LOG_FOLDER / "emergency_log.txt"
-
-LOG_FOLDER.mkdir(exist_ok=True)
-
-
-# ============================================================
-# EMERGENCY HANDLER
-# ============================================================
+from emergency.notification import send_notification
+from emergency.hospital_api import send_hospital_alert
+from emergency.ambulance_api import request_emergency_service
 
 def handle_emergency(
     reason="Possible emergency detected",
@@ -27,11 +14,24 @@ def handle_emergency(
 ):
     """
     Handle and record a possible emergency.
+
+    Current implementation:
+    1. Creates the emergency incident.
+    2. Saves it to the database.
+    3. Queues family notification.
+    4. Prepares hospital alert.
+    5. Prepares emergency-service request.
+
+    External services are currently simulation/interface calls.
     """
 
     timestamp = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
+
+    # ========================================================
+    # EMERGENCY ALERT
+    # ========================================================
 
     print()
     print("=" * 60)
@@ -45,10 +45,22 @@ def handle_emergency(
 
     print("=" * 60)
 
+    # ========================================================
+    # EMERGENCY DATA
+    # ========================================================
+
+    emergency_data = {
+        "timestamp": timestamp,
+        "source": source,
+        "reason": reason,
+        "status": "POSSIBLE EMERGENCY"
+    }
 
     # ========================================================
-    # SAVE EVENT TO LOG FILE
+    # DATABASE
     # ========================================================
+
+    database_result = None
 
     try:
 
@@ -59,24 +71,62 @@ def handle_emergency(
             status="POSSIBLE EMERGENCY"
         )
 
+        database_result = save_incident(incident)
+
     except Exception as error:
 
         print(
-            f"WARNING: Could not write emergency log: {error}"
+            f"WARNING: Could not save incident: {error}"
         )
 
+    # ========================================================
+    # FAMILY NOTIFICATION
+    # ========================================================
+
+    notification_result = send_notification(
+        message=(
+            f"Possible emergency detected. "
+            f"Source: {source}. "
+            f"Reason: {reason}. "
+            f"Time: {timestamp}."
+        ),
+        recipient="FAMILY"
+    )
 
     # ========================================================
-    # RETURN RESULT
+    # HOSPITAL ALERT
+    # ========================================================
+
+    hospital_result = send_hospital_alert(
+        patient_data={
+            "patient_id": "UNKNOWN"
+        },
+        emergency_data=emergency_data
+    )
+
+    # ========================================================
+    # EMERGENCY SERVICE / AMBULANCE
+    # ========================================================
+
+    ambulance_result = request_emergency_service(
+        location="UNKNOWN",
+        emergency_data=emergency_data
+    )
+
+    # ========================================================
+    # FINAL RESULT
     # ========================================================
 
     return {
         "status": "POSSIBLE EMERGENCY",
         "source": source,
         "reason": reason,
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "database": database_result,
+        "notification": notification_result,
+        "hospital": hospital_result,
+        "ambulance": ambulance_result
     }
-
 
 # ============================================================
 # EMERGENCY MANAGER TEST
