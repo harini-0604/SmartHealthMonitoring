@@ -18,7 +18,6 @@ logs/
 .ipynb_checkpoints/
 
 # Large/generated project files
-project_structure.txt
 yolo11n.pt
 smart_health.db
 

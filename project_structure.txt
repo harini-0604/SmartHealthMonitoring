@@ -1,0 +1,101 @@
+SMART HEALTH MONITORING SYSTEM
+PROJECT STRUCTURE
+==============================
+
+SmartHealthMonitoring/
+|
+|-- app.py
+|-- main.py
+|-- README.md
+|-- requirements.txt
+|-- start_dashboard.bat
+|-- yolo11n.pt
+|
+|-- dashboard/
+|   -- dashboard.py
+|
+|-- detection/
+|   |-- person_detection.py
+|   |-- pose_detection.py
+|   |-- fall_detection.py
+|   -- activity_detection.py
+|
+|-- sensors/
+|   |-- esp32.py
+|   |-- heart_rate.py
+|   |-- spo2.py
+|   |-- temperature.py
+|   |-- health_monitor.py
+|   |-- health_emergency.py
+|   -- sensor_test.py
+|
+|-- emergency/
+|   |-- emergency_manager.py
+|   |-- verification.py
+|   |-- voice_assistant.py
+|   |-- alert_manager.py
+|   |-- notification.py
+|   |-- hospital_api.py
+|   -- ambulance_api.py
+|
+|-- database/
+|   |-- database.py
+|   -- models.py
+|
+-- logs/
+    |-- emergency_log.txt
+    -- session_log.txt
+
+MAIN WORKFLOW
+=============
+
+Camera
+  |
+  +--> Person Detection
+  +--> Pose Detection
+  +--> Activity Detection
+  --> Fall Detection
+             |
+             v
+      Emergency Verification
+             |
+             v
+        Emergency Manager
+
+Health Sensors
+  |
+  +--> Heart Rate
+  +--> SpO2
+  --> Temperature
+             |
+             v
+       Health Monitor
+             |
+             v
+    Health Emergency Handler
+             |
+             v
+    Emergency Verification
+
+Emergency System
+  |
+  +--> Voice Verification
+  +--> Incident Logging
+  +--> Notification Interface
+  +--> Hospital Interface
+  --> Emergency Service Interface
+
+Database
+  |
+  --> SQLite Incident History
+
+Dashboard
+  |
+  --> Streamlit Monitoring Interface
+
+NOTE
+====
+
+The ESP32 and health sensors are currently simulated in software.
+The system is a software demonstration and is not a medical
+diagnostic system or a replacement for professional medical care.
