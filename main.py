@@ -5,6 +5,7 @@ from emergency.voice_assistant import run_voice_check
 from detection.person_detection import run_person_detection
 from detection.pose_detection import run_pose_detection
 from detection.fall_detection import run_fall_detection
+from database.database import display_incident_history
 
 
 # ============================================================
@@ -51,48 +52,7 @@ def show_startup():
 # ============================================================
 
 def show_emergency_log():
-
-    print()
-    print("=" * 65)
-    print("EMERGENCY EVENT LOG")
-    print("=" * 65)
-
-    if not EMERGENCY_LOG.exists():
-
-        print("No emergency events recorded.")
-
-        return
-
-
-    with open(
-        EMERGENCY_LOG,
-        "r",
-        encoding="utf-8"
-    ) as file:
-
-        events = [
-            line.strip()
-            for line in file
-            if line.strip()
-        ]
-
-
-    if not events:
-
-        print("No emergency events recorded.")
-
-        return
-
-
-    print(
-        f"Total recorded events: {len(events)}"
-    )
-
-    print()
-
-    for event in events:
-
-        print(event)
+    display_incident_history()
 
 
 # ============================================================

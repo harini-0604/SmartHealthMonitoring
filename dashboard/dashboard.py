@@ -725,6 +725,54 @@ else:
         "✅ HEALTH READINGS WITHIN CONFIGURED RANGE"
     )
 
+# ------------------------------------------------------------
+# AUTOMATIC HEALTH EMERGENCY TRIGGER
+# ------------------------------------------------------------
+
+if health_result["alert"]:
+
+    if not st.session_state.health_emergency_active:
+
+        alert_reasons = []
+
+        for alert in health_result["alerts"]:
+
+            alert_reasons.append(
+                f"{alert['reason']} "
+                f"(Value: {alert['value']})"
+            )
+
+        combined_reason = "; ".join(
+            alert_reasons
+        )
+
+        try:
+
+            emergency_result = handle_emergency(
+                reason=(
+                    "Abnormal health reading: "
+                    + combined_reason
+                ),
+                source="HEALTH SENSOR"
+            )
+
+            st.session_state.health_emergency_active = True
+
+            st.warning(
+                "Emergency response pipeline triggered "
+                "for abnormal health readings."
+            )
+
+        except Exception as error:
+
+            st.error(
+                f"Health emergency handling failed: {error}"
+            )
+
+else:
+
+    # Reset after readings return to normal
+    st.session_state.health_emergency_active = False
 
 # ------------------------------------------------------------
 # INDIVIDUAL SENSOR STATUS
@@ -873,32 +921,51 @@ st.divider()
 
 st.header("Emergency Alerts")
 
-if LOG_FILE.exists():
+# Read emergency incidents directly from SQLite database
+incidents = get_incidents()
 
-    with open(
-        LOG_FILE,
-        "r",
-        encoding="utf-8"
-    ) as file:
+emergency_alerts = [
+    incident
+    for incident in incidents
+    if incident[4] == "POSSIBLE EMERGENCY"
+]
 
-        emergency_logs = file.readlines()
+if emergency_alerts:
 
-    if emergency_logs:
+    for incident in emergency_alerts[:10]:
 
-        for log in reversed(emergency_logs[-10:]):
+        incident_id = incident[0]
+        incident_time = incident[1]
+        incident_source = incident[2]
+        incident_reason = incident[3]
 
-            st.warning(log.strip())
+        st.error(
+            "🚨 POSSIBLE EMERGENCY"
+        )
 
-    else:
+        st.write(
+            f"**Incident #{incident_id}**"
+        )
 
-        st.info("No emergency alerts recorded.")
+        st.write(
+            f"**Time:** {incident_time}"
+        )
+
+        st.write(
+            f"**Source:** {incident_source}"
+        )
+
+        st.write(
+            f"**Reason:** {incident_reason}"
+        )
+
+        st.divider()
 
 else:
 
-    st.info("Emergency log file does not exist yet.")
-
-
-st.divider()
+    st.success(
+        "✅ No emergency alerts recorded."
+    )
 
 
 # ============================================================

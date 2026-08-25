@@ -147,51 +147,52 @@ def run_voice_check():
 
     # Convert response to lowercase
 
-    response = response.lower()
+    response = response.lower().strip()
+
+    # Normalize punctuation so voice responses can be
+    # compared reliably.
+
+    import re
+
+    normalized_response = re.sub(
+        r"[^a-zA-Z0-9']+",
+        " ",
+        response
+    ).strip()
+
+    response_words = set(
+        normalized_response.split()
+    )
 
 
     # ========================================================
     # RESPONSE KEYWORDS
     # ========================================================
 
-    positive_words = [
-
+    positive_words = {
         "yes",
         "yeah",
         "yep",
         "okay",
         "ok",
         "fine",
-        "good",
-        "i am okay",
-        "i'm okay",
-        "i am ok",
-        "i'm ok"
+        "good"
+    }
 
-    ]
-
-
-    negative_words = [
-
+    negative_words = {
         "no",
-        "not okay",
-        "not ok",
         "help",
         "emergency",
         "pain",
         "hurt"
-
-    ]
+    }
 
 
     # ========================================================
     # POSSIBLE EMERGENCY
     # ========================================================
 
-    if any(
-        word in response
-        for word in negative_words
-    ):
+    if response_words.intersection(negative_words):
 
         speak(
             "I understand that you may need help."
@@ -219,10 +220,7 @@ def run_voice_check():
     # USER IS OKAY
     # ========================================================
 
-    elif any(
-        word in response
-        for word in positive_words
-    ):
+    elif response_words.intersection(positive_words):
 
         speak(
             "Okay. I am glad you are okay."

@@ -1,4 +1,4 @@
-import sys
+﻿import sys
 import threading
 from pathlib import Path
 import cv2
@@ -78,6 +78,8 @@ HORIZONTAL_ANGLE_THRESHOLD = 45
 MOVEMENT_WINDOW = 8
 
 FALL_CONFIRMATION_TIME = 2.0
+
+DEBUG_MODE = False
 
 RECOVERY_CONFIRMATION_TIME = 1.0
 
@@ -321,12 +323,14 @@ def process_fall_frame(
                 # BODY CENTER
                 # ------------------------------------------------
 
-                print(
-                    f"DEBUG LANDMARKS | LSY={left_shoulder[1]:.3f} "
-                    f"RSY={right_shoulder[1]:.3f} "
-                    f"LHY={left_hip[1]:.3f} "
-                    f"RHY={right_hip[1]:.3f}"
-                )
+                if DEBUG_MODE:
+                    print(
+                        f"DEBUG LANDMARKS |"
+                        f"LSY={left_shoulder[1]:.3f} "
+                        f"RSY={right_shoulder[1]:.3f} "
+                        f"LHY={left_hip[1]:.3f} "
+                        f"RHY={right_hip[1]:.3f}"
+                    )
 
                 current_body_y = (
                     shoulder_y
@@ -515,6 +519,16 @@ def process_fall_frame(
                         newest_y
                         - oldest_y
                     )
+
+                    if DEBUG_MODE:
+                        print(
+                            f"FALL DEBUG | "
+                            f"Angle={current_angle:.2f} | "
+                            f"Downward={downward_distance:.3f} | "
+                            f"Speed={vertical_speed:.3f} | "
+                            f"Candidate={fall_candidate}"
+                        )
+
 
                 significant_downward_motion = (
                     downward_distance
