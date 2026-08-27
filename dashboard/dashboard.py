@@ -25,7 +25,9 @@ from detection.fall_detection import (
     run_fall_detection,
     process_fall_frame)
 from detection.activity_detection import run_activity_detection
-
+from detection.multi_person_dashboard import (
+    process_multi_person_frame
+)
 from ultralytics import YOLO
 
 from sensors.esp32 import get_esp32_connection
@@ -198,25 +200,10 @@ if start_live_camera:
 
     camera = cv2.VideoCapture(0)
 
-    mp_pose = mp.solutions.pose
-
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
-
-    body_y_history = []
-
-    previous_body_y = None
-    previous_time = None
-
-    fall_candidate = False
-    fall_confirmed = False
-    fall_candidate_start = None
     emergency_alert_sent = False
+
+    # Multi-person tracking state
+    multi_person_states = {}
 
     if not camera.isOpened():
 
@@ -244,44 +231,100 @@ if start_live_camera:
 
                     break
 
-
                 (
                     annotated_frame,
-                    person_count,
-                    body_angle,
-                    body_y,
-                    vertical_speed,
-                    status,
-                    body_y_history,
-                    previous_body_y,
-                    previous_time,
-                    fall_candidate,
-                    fall_confirmed,
-                    fall_candidate_start,
-                    emergency_alert_sent
-                ) = process_fall_frame(
-
+                    people,
+                    multi_person_states
+                ) = process_multi_person_frame(
                     frame,
-
-                    model,
-
-                    pose,
-
-                    body_y_history,
-
-                    previous_body_y,
-
-                    previous_time,
-
-                    fall_candidate,
-
-                    fall_confirmed,
-
-                    fall_candidate_start,
-
-                    emergency_alert_sent
+                    multi_person_states
                 )
 
+                # ------------------------------------------------
+                # MULTI-PERSON STATUS
+                # ------------------------------------------------
+
+                person_count = len(people)
+
+                fall_confirmed = any(
+                    person["fall_confirmed"]
+                    for person in people
+                )
+
+                body_angle = None
+
+                if people:
+
+                    valid_angles = [
+                        person["body_angle"]
+                        for person in people
+                        if person["body_angle"] is not None
+                    ]
+
+                    if valid_angles:
+                        body_angle = valid_angles[0]
+
+
+                # Overall monitoring status
+
+                if fall_confirmed:
+                    status = "FALL CONFIRMED"
+                elif people:
+                    status = "NORMAL"
+                else:
+                    status = "NO PERSON DETECTED"
+
+
+                # Overall vertical speed for display
+
+                vertical_speeds = [
+                    abs(person["vertical_speed"])
+                    for person in people
+                    if person["vertical_speed"] is not None
+                ]
+
+                vertical_speed = (
+                    max(vertical_speeds)
+                    if vertical_speeds
+                    else 0.0
+                )
+
+                # ------------------------------------------------
+                # FALL EMERGENCY HANDLING
+                # ------------------------------------------------
+
+                if fall_confirmed and not emergency_alert_sent:
+
+                    fallen_people = [
+                        str(person["id"])
+                        for person in people
+                        if person["fall_confirmed"]
+                    ]
+
+                    fall_reason = (
+                        "Fall confirmed for Person ID: "
+                        + ", ".join(fallen_people)
+                    )
+
+                    try:
+
+                        emergency_result = handle_emergency(
+                            reason=fall_reason,
+                            source="FALL DETECTION"
+                        )
+
+                        emergency_alert_sent = True
+
+                    except Exception as error:
+
+                        print(
+                            f"Fall emergency error: {error}"
+                        )
+
+                # Reset emergency alert after recovery
+
+                if not fall_confirmed:
+                    emergency_alert_sent = False
 
                 # ------------------------------------------------
                 # BODY ANGLE
@@ -298,24 +341,6 @@ if start_live_camera:
                         (0, 255, 0),
                         2
                     )
-
-
-                # ------------------------------------------------
-                # BODY Y
-                # ------------------------------------------------
-
-                if body_y is not None:
-
-                    cv2.putText(
-                        annotated_frame,
-                        f"Body Y: {body_y:.3f}",
-                        (20, 65),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.65,
-                        (0, 255, 0),
-                        2
-                    )
-
 
                 # ------------------------------------------------
                 # VERTICAL SPEED
@@ -416,8 +441,6 @@ if start_live_camera:
         finally:
 
             camera.release()
-
-            pose.close()
 
 # ============================================================
 # HEALTH SENSORS
