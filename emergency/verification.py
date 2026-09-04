@@ -1,331 +1,170 @@
 import time
 
-from emergency.voice_assistant import run_voice_check
+from emergency.voice_assistant import speak, listen
 
 
 class EmergencyVerification:
 
-    def __init__(self, duration=60):
+    def __init__(self, duration=30):
 
         self.duration = duration
         self.active = False
-        self.start_time = None
         self.reason = None
         self.source = None
 
-    # ========================================================
-    # START VERIFICATION
-    # ========================================================
+    def start(self, reason="Possible emergency detected", source="UNKNOWN"):
 
-    def start(
-        self,
-        reason,
-        source="FALL DETECTION"
-    ):
-
-        self.active = True
-        self.start_time = time.time()
         self.reason = reason
         self.source = source
+        self.active = True
 
         print()
         print("=" * 70)
-        print("EMERGENCY VERIFICATION STARTED")
+        print("EMERGENCY VERIFICATION")
         print("=" * 70)
 
-        print(f"SOURCE : {self.source}")
-        print(f"REASON : {self.reason}")
-        print(f"TIME   : {self.duration} seconds")
-
-        print()
-        print("Please confirm that you are okay.")
-
+        print(f"Source : {self.source}")
+        print(f"Reason : {self.reason}")
+        print("Verification Time : 30 seconds")
         print("=" * 70)
-
-    # ========================================================
-    # VOICE VERIFICATION
-    # ========================================================
 
     def run_voice_verification(self):
 
         if not self.active:
 
             return {
-                "status": "NOT ACTIVE"
+                "status": "NOT_STARTED"
             }
 
         print()
-        print("=" * 70)
-        print("VOICE VERIFICATION")
-        print("=" * 70)
+        print("🚨 POSSIBLE EMERGENCY DETECTED")
+        print("Voice verification started.")
+        print("You have 30 seconds to respond.")
+        print()
 
-        while self.active:
+        speak("Emergency detected.")
+        speak("Are you okay?")
 
-            remaining = self.get_remaining_time()
+        start_time = time.time()
 
-            print(
-                f"Verification time remaining: "
-                f"{remaining} seconds"
+        while time.time() - start_time < self.duration:
+
+            remaining = int(
+                self.duration - (time.time() - start_time)
             )
 
-            # ------------------------------------------------
-            # CHECK TIMEOUT BEFORE LISTENING
-            # ------------------------------------------------
-
-            if self.is_expired():
-
-                return self.escalate()
-
-            # ------------------------------------------------
-            # VOICE CHECK
-            # ------------------------------------------------
-
-            result = run_voice_check()
-
-            status = result.get("status")
-
-            # ------------------------------------------------
-            # USER CONFIRMED RECOVERY
-            # ------------------------------------------------
-
-            if status == "USER OKAY":
-
-                return self.cancel(
-                    reason="User confirmed they are okay"
-                )
-
-            # ------------------------------------------------
-            # USER REQUESTED HELP
-            # ------------------------------------------------
-
-            if status == "POSSIBLE EMERGENCY":
-
-                self.active = False
-
-                return result
-
-            # ------------------------------------------------
-            # NO RESPONSE
-            # ------------------------------------------------
-
-            if status == "NO RESPONSE":
-
-                print()
-                print(
-                    "No valid response received."
-                )
-
-                # Check whether the 60-second period
-                # has now expired.
-
-                if self.is_expired():
-
-                    return self.escalate()
-
-                print(
-                    "Continuing emergency verification..."
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # UNKNOWN RESPONSE
-            # ------------------------------------------------
-
-            if status == "UNKNOWN RESPONSE":
-
-                print()
-                print(
-                    "Response was not understood."
-                )
-
-                if self.is_expired():
-
-                    return self.escalate()
-
-                print(
-                    "Please respond again."
-                )
-
-                continue
-
-            # ------------------------------------------------
-            # UNEXPECTED STATUS
-            # ------------------------------------------------
-
             print(
-                f"Unexpected verification status: "
-                f"{status}"
+                f"Waiting for response... {remaining} seconds remaining"
             )
 
-            if self.is_expired():
+            response = listen()
 
-                return self.escalate()
+            if response:
 
-        return {
-            "status": "VERIFICATION ENDED"
-        }
+                response = response.lower().strip()
 
-    # ========================================================
-    # REMAINING TIME
-    # ========================================================
+                print(
+                    f"YOU: {response}"
+                )
 
-    def get_remaining_time(self):
+                # ------------------------------------------
+                # SAFE RESPONSE
+                # ------------------------------------------
 
-        if not self.active:
+                if any(
+                    word in response
+                    for word in [
+                        "yes",
+                        "okay",
+                        "ok",
+                        "fine",
+                        "good"
+                    ]
+                ):
 
-            return 0
+                    speak("Okay. Emergency cancelled.")
 
-        elapsed = (
-            time.time()
-            - self.start_time
+                    self.active = False
+
+                    return {
+                        "status": "CANCELLED",
+                        "response": response,
+                        "reason": self.reason,
+                        "source": self.source
+                    }
+
+
+                # ------------------------------------------
+                # HELP RESPONSE
+                # ------------------------------------------
+
+                if any(
+                    word in response
+                    for word in [
+                        "help",
+                        "emergency",
+                        "no",
+                        "not okay",
+                        "need help"
+                    ]
+                ):
+
+                    speak(
+                        "Emergency confirmed. Sending alerts."
+                    )
+
+                    self.active = False
+
+                    return {
+                        "status": "CONFIRMED",
+                        "response": response,
+                        "reason": self.reason,
+                        "source": self.source
+                    }
+
+            time.sleep(1)
+
+
+        # --------------------------------------------------
+        # NO RESPONSE
+        # --------------------------------------------------
+
+        speak(
+            "No response received. Emergency confirmed."
         )
-
-        remaining = (
-            self.duration
-            - elapsed
-        )
-
-        return max(
-            0,
-            int(remaining)
-        )
-
-    # ========================================================
-    # CHECK EXPIRATION
-    # ========================================================
-
-    def is_expired(self):
-
-        if not self.active:
-
-            return False
-
-        return (
-            time.time()
-            - self.start_time
-            >= self.duration
-        )
-
-    # ========================================================
-    # CANCEL VERIFICATION
-    # ========================================================
-
-    def cancel(
-        self,
-        reason="User recovered"
-    ):
 
         self.active = False
 
-        print()
-        print("=" * 70)
-        print("EMERGENCY VERIFICATION CANCELLED")
-        print("=" * 70)
-
-        print(f"REASON : {reason}")
-
-        print("=" * 70)
-
         return {
-            "status": "CANCELLED",
-            "reason": reason
-        }
-
-    # ========================================================
-    # ESCALATE EMERGENCY
-    # ========================================================
-
-    def escalate(self):
-
-        from emergency.emergency_manager import handle_emergency
-
-        if not self.active:
-
-            return {
-                "status": "NOT ACTIVE"
-            }
-
-        self.active = False
-
-        print()
-        print("=" * 70)
-        print("EMERGENCY VERIFICATION FAILED")
-        print("=" * 70)
-
-        print("No valid confirmation received.")
-        print("Emergency escalation required.")
-
-        print("=" * 70)
-
-        return handle_emergency(
-            reason=(
-                f"Verification timeout: "
-                f"{self.reason}"
-            ),
-            source=self.source
-        )
-
-    # ========================================================
-    # CURRENT STATUS
-    # ========================================================
-
-    def get_status(self):
-
-        if not self.active:
-
-            return {
-                "status": "INACTIVE",
-                "remaining": 0
-            }
-
-        remaining = self.get_remaining_time()
-
-        if remaining <= 0:
-
-            return {
-                "status": "EXPIRED",
-                "remaining": 0
-            }
-
-        return {
-            "status": "VERIFYING",
-            "remaining": remaining,
+            "status": "NO_RESPONSE",
             "reason": self.reason,
             "source": self.source
         }
 
 
-# ============================================================
-# DIRECT TEST
-# ============================================================
+def create_emergency_verification(duration=30):
+
+    return EmergencyVerification(
+        duration=duration
+    )
+
 
 if __name__ == "__main__":
 
     verification = EmergencyVerification(
-        duration=5
+        duration=30
     )
 
     verification.start(
-        reason="Test fall",
-        source="TEST"
+        reason="Test emergency condition",
+        source="HARDWARE TEST"
     )
 
-    print(
-        "Current status:",
-        verification.get_status()
-    )
-
-    time.sleep(1)
-
-    print(
-        "Remaining:",
-        verification.get_remaining_time()
-    )
-
-    verification.cancel(
-        reason="Test completed"
-    )
+    result = verification.run_voice_verification()
 
     print()
-    print("Verification module test completed.")
+    print("=" * 70)
+    print("VERIFICATION RESULT")
+    print("=" * 70)
+    print(result)
+    print("=" * 70)

@@ -8,9 +8,6 @@ sys.path.insert(0, str(PROJECT_ROOT))
 import pyttsx3
 import speech_recognition as sr
 
-from emergency.emergency_manager import handle_emergency
-
-
 # ============================================================
 # TEXT TO SPEECH
 # ============================================================

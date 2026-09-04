@@ -1,153 +1,217 @@
 from datetime import datetime
-from pathlib import Path
 
 from database.database import save_incident
 from database.models import Incident
 
+from emergency.verification import EmergencyVerification
 from emergency.notification import send_notification
 from emergency.hospital_api import send_hospital_alert
-from emergency.ambulance_api import request_emergency_service
+
+
+# ============================================================
+# EMERGENCY MANAGER
+# ============================================================
 
 def handle_emergency(
-    reason="Possible emergency detected",
+    reason,
     source="UNKNOWN"
 ):
-    """
-    Handle and record a possible emergency.
-
-    Current implementation:
-    1. Creates the emergency incident.
-    2. Saves it to the database.
-    3. Queues family notification.
-    4. Prepares hospital alert.
-    5. Prepares emergency-service request.
-
-    External services are currently simulation/interface calls.
-    """
 
     timestamp = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
+    print()
+    print("=" * 75)
+    print("🚨 EMERGENCY MANAGER")
+    print("=" * 75)
+
+    print(f"Source    : {source}")
+    print(f"Reason    : {reason}")
+    print(f"Timestamp : {timestamp}")
+
     # ========================================================
-    # EMERGENCY ALERT
+    # 1. SAVE INCIDENT TO DATABASE
     # ========================================================
+
+    incident = Incident(
+        timestamp=timestamp,
+        source=source,
+        reason=reason,
+        status="EMERGENCY_CONFIRMED"
+    )
+
+    save_incident(incident)
 
     print()
-    print("=" * 60)
-    print("🚨 EMERGENCY ALERT")
-    print("=" * 60)
-
-    print(f"TIME   : {timestamp}")
-    print(f"SOURCE : {source}")
-    print(f"REASON : {reason}")
-    print("STATUS : POSSIBLE EMERGENCY DETECTED")
-
-    print("=" * 60)
+    print("DATABASE : INCIDENT SAVED")
 
     # ========================================================
-    # EMERGENCY DATA
+    # 2. FAMILY SMS ALERT
     # ========================================================
 
-    emergency_data = {
-        "timestamp": timestamp,
-        "source": source,
-        "reason": reason,
-        "status": "POSSIBLE EMERGENCY"
-    }
-
-    # ========================================================
-    # DATABASE
-    # ========================================================
-
-    database_result = None
-
-    try:
-
-        incident = Incident(
-            timestamp=timestamp,
-            source=source,
-            reason=reason,
-            status="POSSIBLE EMERGENCY"
-        )
-
-        database_result = save_incident(incident)
-
-    except Exception as error:
-
-        print(
-            f"WARNING: Could not save incident: {error}"
-        )
-
-    # ========================================================
-    # FAMILY NOTIFICATION
-    # ========================================================
+    message = (
+        "🚨 EMERGENCY ALERT\n"
+        f"Source: {source}\n"
+        f"Reason: {reason}\n"
+        f"Time: {timestamp}\n"
+        "Immediate attention required."
+    )
 
     notification_result = send_notification(
-        message=(
-            f"Possible emergency detected. "
-            f"Source: {source}. "
-            f"Reason: {reason}. "
-            f"Time: {timestamp}."
-        ),
+        message=message,
         recipient="FAMILY"
     )
 
     # ========================================================
-    # HOSPITAL ALERT
+    # 3. HOSPITAL ALERT
     # ========================================================
 
     hospital_result = send_hospital_alert(
         patient_data={
-            "patient_id": "UNKNOWN"
+            "source": source
         },
-        emergency_data=emergency_data
+        emergency_data={
+            "reason": reason,
+            "timestamp": timestamp,
+            "status": "EMERGENCY_CONFIRMED"
+        }
     )
 
     # ========================================================
-    # EMERGENCY SERVICE / AMBULANCE
+    # 4. EMERGENCY SERVICE INTERFACE
     # ========================================================
 
-    ambulance_result = request_emergency_service(
-        location="UNKNOWN",
-        emergency_data=emergency_data
-    )
+    print()
+    print("=" * 60)
+    print("EMERGENCY SERVICE INTERFACE")
+    print("=" * 60)
+    print("STATUS : EMERGENCY SERVICE ALERT PREPARED")
+    print(f"REASON : {reason}")
+    print(f"TIME   : {timestamp}")
+    print("=" * 60)
+
+    emergency_service_result = {
+        "status": "EMERGENCY SERVICE ALERT PREPARED",
+        "reason": reason,
+        "timestamp": timestamp
+    }
 
     # ========================================================
     # FINAL RESULT
     # ========================================================
 
+    print()
+    print("=" * 75)
+    print("EMERGENCY WORKFLOW COMPLETED")
+    print("=" * 75)
+
     return {
-        "status": "POSSIBLE EMERGENCY",
-        "source": source,
+        "status": "EMERGENCY_HANDLED",
         "reason": reason,
+        "source": source,
         "timestamp": timestamp,
-        "database": database_result,
         "notification": notification_result,
         "hospital": hospital_result,
-        "ambulance": ambulance_result
+        "emergency_service": emergency_service_result
     }
 
+
 # ============================================================
-# EMERGENCY MANAGER TEST
+# VERIFIED EMERGENCY
+# ============================================================
+
+def handle_verified_emergency(
+    reason,
+    source="UNKNOWN",
+    verification_duration=30
+):
+
+    print()
+    print("=" * 75)
+    print("VERIFIED EMERGENCY WORKFLOW")
+    print("=" * 75)
+
+    verification = EmergencyVerification(
+        duration=verification_duration
+    )
+
+    verification.start(
+        reason=reason,
+        source=source
+    )
+
+    verification_result = (
+        verification.run_voice_verification()
+    )
+
+    # ========================================================
+    # USER CANCELLED EMERGENCY
+    # ========================================================
+
+    if verification_result.get("status") == "CANCELLED":
+
+        print()
+        print("=" * 75)
+        print("EMERGENCY CANCELLED")
+        print("=" * 75)
+
+        return {
+            "status": "CANCELLED",
+            "verification": verification_result
+        }
+
+    # ========================================================
+    # EMERGENCY CONFIRMED / NO RESPONSE
+    # ========================================================
+
+    if verification_result.get("status") in [
+        "CONFIRMED",
+        "NO_RESPONSE"
+    ]:
+
+        emergency_result = handle_emergency(
+            reason=reason,
+            source=source
+        )
+
+        return {
+            "status": emergency_result["status"],
+            "verification": verification_result,
+            "emergency": emergency_result
+        }
+
+    # ========================================================
+    # UNKNOWN STATE
+    # ========================================================
+
+    return {
+        "status": "UNKNOWN",
+        "verification": verification_result
+    }
+
+
+# ============================================================
+# EMERGENCY TEST
 # ============================================================
 
 def emergency_test():
 
     result = handle_emergency(
-        reason="Emergency manager test",
-        source="TEST"
+        reason="Test emergency condition",
+        source="EMERGENCY TEST"
     )
 
-    print(
-        "Emergency manager test completed."
-    )
+    print()
+    print("=" * 75)
+    print("TEST RESULT")
+    print("=" * 75)
 
-    return result
+    print(result)
 
 
 # ============================================================
-# DIRECT EXECUTION
+# MAIN
 # ============================================================
 
 if __name__ == "__main__":

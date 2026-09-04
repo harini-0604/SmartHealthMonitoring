@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 from datetime import datetime
+import threading
 
 import cv2
 import streamlit as st
@@ -15,6 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from database.database import get_incidents
 from emergency.emergency_manager import handle_emergency
+from emergency.verification import EmergencyVerification
+from emergency.emergency_manager import handle_verified_emergency
 from detection.person_detection import (
     run_person_detection, 
     process_person_frame)
@@ -35,7 +38,8 @@ from sensors.heart_rate import create_heart_rate_sensor
 from sensors.spo2 import create_spo2_sensor
 from sensors.temperature import create_temperature_sensor
 from sensors.health_monitor import create_health_monitor
-
+from sensors.risk_scoring import create_risk_scoring
+from ai.risk_ai import create_ai_risk_scorer
 
 LOG_FILE = PROJECT_ROOT / "logs" / "emergency_log.txt"
 
@@ -55,6 +59,36 @@ if st.button("Refresh Dashboard"):
 
 st.divider()
 
+# ============================================================
+# EMERGENCY VERIFICATION STATE
+# ============================================================
+
+if "emergency_verification" not in st.session_state:
+
+    st.session_state.emergency_verification = None
+
+
+if "emergency_verification_active" not in st.session_state:
+
+    st.session_state.emergency_verification_active = False
+
+
+if "verification_thread" not in st.session_state:
+
+    st.session_state.verification_thread = None
+
+
+if "verification_result" not in st.session_state:
+
+    st.session_state.verification_result = None
+
+if "live_verification_result" not in st.session_state:
+
+    st.session_state.live_verification_result = None
+
+if "simulated_fall_active" not in st.session_state:
+    
+    st.session_state.simulated_fall_active = False
 
 # ============================================================
 # MONITORING STATUS
@@ -148,6 +182,133 @@ with camera_col4:
 
 st.divider()
 
+# ============================================================
+# FALL DEMONSTRATION / SIMULATION
+# ============================================================
+
+st.header("Fall Emergency Demonstration")
+
+st.write(
+    "Use this button to safely demonstrate the emergency "
+    "verification workflow without physically falling."
+)
+
+if st.button("🔴 SIMULATE FALL", type="primary"):
+
+    if not st.session_state.emergency_verification_active:
+
+        try:
+
+            simulation_reason = (
+                "Simulated fall for project demonstration"
+            )
+
+            verification = EmergencyVerification(
+                duration=30
+            )
+
+            verification.start(
+                reason=simulation_reason,
+                source="SIMULATED FALL"
+            )
+
+            st.session_state.emergency_verification = verification
+            st.session_state.emergency_verification_active = True
+
+            st.session_state.verification_result = None
+
+            st.session_state.simulated_fall_active = True
+
+            st.rerun()
+
+        except Exception as error:
+
+            st.error(
+                f"Fall simulation error: {error}"
+            )
+
+
+# ------------------------------------------------------------
+# RUN SIMULATED FALL VERIFICATION
+# ------------------------------------------------------------
+
+if (
+    st.session_state.emergency_verification_active
+    and st.session_state.get("simulated_fall_active", False)
+    and st.session_state.emergency_verification is not None
+):
+
+    st.warning(
+        "SIMULATED FALL DETECTED — Emergency verification started."
+    )
+
+    try:
+
+        simulation_result = (
+            st.session_state.emergency_verification
+            .run_voice_verification()
+        )
+
+        st.session_state.verification_result = simulation_result
+
+        st.session_state.emergency_verification_active = False
+        st.session_state.simulated_fall_active = False
+
+        status = simulation_result.get("status", "UNKNOWN")
+
+        if status == "CANCELLED":
+
+            st.success(
+                "Emergency cancelled — person confirmed they are okay."
+            )
+
+        elif status in [
+            "CONFIRMED",
+            "NO_RESPONSE"
+        ]:
+
+            st.error(
+                "🚨 Emergency confirmed. Starting Emergency Manager..."
+            )
+
+            try:
+
+                emergency_result = handle_emergency(
+                    reason=simulation_result.get(
+                        "reason",
+                        "Simulated fall for project demonstration"
+                    ),
+                    source="SIMULATED FALL"
+                )
+
+                st.session_state.emergency_result = emergency_result
+                st.success(
+                    "Emergency Manager completed. Alerts processed."
+                )
+
+            except Exception as error:
+
+                st.error(
+                    f"Emergency Manager error: {error}"
+                )
+
+        else:
+
+            st.info(
+                f"Verification result: {status}"
+            )
+
+    except Exception as error:
+
+        st.session_state.emergency_verification_active = False
+        st.session_state.simulated_fall_active = False
+
+        st.error(
+            f"Emergency verification error: {error}"
+        )
+
+
+st.divider()
 
 # ============================================================
 # DETECTION MODULES
@@ -193,14 +354,44 @@ person_status_placeholder = st.empty()
 
 fall_status_placeholder = st.empty()
 
+def run_emergency_verification():
+
+    try:
+
+        result = (
+            emergency_verification.run_voice_verification()
+        )
+
+        st.session_state["live_verification_result"] = result
+
+    except Exception as error:
+
+        st.session_state["live_verification_result"] = {
+            "status": "ERROR",
+            "error": str(error)
+        }
 
 if start_live_camera:
+
+    #Current camera location
+    CAMERA_ROOM = "Living Room"
 
     model = YOLO("yolo11n.pt")
 
     camera = cv2.VideoCapture(0)
 
     emergency_alert_sent = False
+
+    # Live camera risk state
+    st.session_state["live_inactivity_alert"] = False
+    st.session_state["live_possible_fall"] = False
+    st.session_state["live_confirmed_fall"] = False
+
+    #Emergency verification state
+    emergency_verification = None
+    emergency_verification_active = False
+    verification_thread = None
+    verification_result = None
 
     # Multi-person tracking state
     multi_person_states = {}
@@ -264,13 +455,25 @@ if start_live_camera:
                     if valid_angles:
                         body_angle = valid_angles[0]
 
+                # Store live camera risk conditions
+                st.session_state["live_confirmed_fall"] = fall_confirmed
+
+                st.session_state["live_possible_fall"] = any(
+                    person["status"] == "POSSIBLE FALL"
+                    for person in people
+                )
+
+                st.session_state["live_inactivity_alert"] = any(
+                    person.get("inactivity_alert", False)
+                    for person in people
+                )
 
                 # Overall monitoring status
 
                 if fall_confirmed:
                     status = "FALL CONFIRMED"
                 elif people:
-                    status = "NORMAL"
+                    status = "NORMAL" 
                 else:
                     status = "NO PERSON DETECTED"
 
@@ -290,10 +493,14 @@ if start_live_camera:
                 )
 
                 # ------------------------------------------------
-                # FALL EMERGENCY HANDLING
+                # START EMERGENCY VERIFICATION
                 # ------------------------------------------------
-
-                if fall_confirmed and not emergency_alert_sent:
+                
+                if (
+                    fall_confirmed
+                    and not emergency_alert_sent
+                    and not emergency_verification_active
+                ):
 
                     fallen_people = [
                         str(person["id"])
@@ -302,29 +509,113 @@ if start_live_camera:
                     ]
 
                     fall_reason = (
-                        "Fall confirmed for Person ID: "
+                        "Fall confirmed in "
+                        + CAMERA_ROOM
+                        + " for Person ID: "
                         + ", ".join(fallen_people)
                     )
 
                     try:
-
-                        emergency_result = handle_emergency(
-                            reason=fall_reason,
-                            source="FALL DETECTION"
+                        emergency_verification = EmergencyVerification(
+                            duration=30
                         )
 
-                        emergency_alert_sent = True
+                        st.session_state.live_verification_result = None
+                        emergency_verification_active = True
+
+                        verification_thread = threading.Thread(
+                            target=run_emergency_verification,
+                            daemon=True
+                        )
+
+                        verification_thread.start()
 
                     except Exception as error:
 
+                        emergency_verification_active = False
+
                         print(
-                            f"Fall emergency error: {error}"
+                            f"Emergency verification error: {error}"
                         )
 
-                # Reset emergency alert after recovery
 
+                # ------------------------------------------------
+                # CHECK VERIFICATION RESULT
+                # ------------------------------------------------
+                
+                if (
+                    emergency_verification_active
+                    and st.session_state.live_verification_result is not
+                    None
+                ):
+
+                    result_status = st.session_state.live_verification_result.get(
+                        "status"
+                    )
+
+                    if result_status == "CANCELLED":
+
+                        emergency_alert_sent = False
+                        emergency_verification_active = False
+
+                    elif result_status in [
+                        "CONFIRMED",
+                        "NO_RESPONSE"
+                    ]:
+
+                        print()
+                        print("🚨 FALL EMERGENCY CONFIRMED")
+                        print("Starting Emergency Manager...")
+
+                        try:
+
+                            emergency_result = handle_emergency(
+                                reason=st.session_state.live_verification_result.get(
+                                    "reason",
+                                    "Fall detected by AI system"
+                                ),
+                                source="FALL DETECTION"
+                            )
+
+                            print(
+                                "Emergency Manager Result:",
+                                emergency_result
+                            )
+
+                            emergency_alert_sent = True
+                            emergency_verification_active = False
+
+                        except Exception as error:
+
+                            print(
+                                "Emergency Manager error:",
+                                error
+                            )
+
+                            emergency_verification_active = False
+
+                # -----------------------------------------------
+                # AUTOMATIC RECOVERY
+                # ------------------------------------------------
+                
                 if not fall_confirmed:
-                    emergency_alert_sent = False
+
+                    if (
+                        emergency_verification_active
+                        and emergency_verification is not None
+                    ):
+
+                        emergency_verification.cancel(
+                            reason="Person recovered after fall"
+                        )
+
+                        emergency_verification_active = False
+                        st.session_state.live_verification_result = {
+                            "status": "CANCELLED",
+                            "reason": "Person recovered after fall"
+                        }
+
+                        emergency_alert_sent = False
 
                 # ------------------------------------------------
                 # BODY ANGLE
@@ -335,7 +626,7 @@ if start_live_camera:
                     cv2.putText(
                         annotated_frame,
                         f"Body angle: {body_angle:.1f}",
-                        (20, 35),
+                        (20, 95),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.65,
                         (0, 255, 0),
@@ -349,28 +640,26 @@ if start_live_camera:
                 cv2.putText(
                     annotated_frame,
                     f"Vertical speed: {vertical_speed:.3f}",
-                    (20, 95),
+                    (20, 65),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
                     (0, 255, 0),
                     2
                 )
 
-
                 # ------------------------------------------------
-                # PEOPLE
+                # ROOM
                 # ------------------------------------------------
-
+                
                 cv2.putText(
                     annotated_frame,
-                    f"People: {person_count}",
+                    f"Room: {CAMERA_ROOM}",
                     (20, 125),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
-                    (0, 255, 0),
+                    (255, 255, 255),
                     2
                 )
-
 
                 # ------------------------------------------------
                 # STATUS
@@ -401,7 +690,7 @@ if start_live_camera:
                 cv2.putText(
                     annotated_frame,
                     f"Time: {current_time_display}",
-                    (20, 195),
+                    (20, 200),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.65,
                     (255, 255, 255),
@@ -631,14 +920,14 @@ with sensor_col1:
         "Heart Rate (BPM)",
         min_value=0.0,
         max_value=250.0,
-        value=75.0,
+        value=st.session_state.get("heart_rate_input",75.0),
         step=1.0
     )
 
     heart_rate_sensor.update(
         heart_rate_value
     )
-
+    st.session_state.heart_rate_input = heart_rate_value
 
 with sensor_col2:
 
@@ -646,13 +935,14 @@ with sensor_col2:
         "SpO2 (%)",
         min_value=0.0,
         max_value=100.0,
-        value=98.0,
+        value=st.session_state.get("spo2_input",98.0),
         step=1.0
     )
 
     spo2_sensor.update(
         spo2_value
     )
+    st.session_state.spo2_input = spo2_value
 
 
 with sensor_col3:
@@ -661,14 +951,54 @@ with sensor_col3:
         "Temperature (°C)",
         min_value=0.0,
         max_value=50.0,
-        value=36.7,
+        value=st.session_state.get("temperature_input",36.7),
         step=0.1
     )
 
     temperature_sensor.update(
         temperature_value
     )
+    st.session_state.temperature_input = temperature_value
 
+# ------------------------------------------------------------
+# BP + EMERGENCY BUTTON
+# ------------------------------------------------------------
+
+bp_col1, bp_col2, bp_col3 = st.columns(3)
+
+
+with bp_col1:
+
+    systolic_bp = st.number_input(
+        "Systolic BP (mmHg)",
+        min_value=40,
+        max_value=250,
+        value=st.session_state.get("systolic-bp",118),
+    )
+
+
+with bp_col2:
+
+    diastolic_bp = st.number_input(
+        "Diastolic BP (mmHg)",
+        min_value=20,
+        max_value=150,
+        value=st.session_state.get("diastolic_bp",76),
+        step=1
+    )
+
+
+with bp_col3:
+
+    emergency_button = st.checkbox(
+        "🔴 Finger Emergency Button",
+        value=False
+    )
+
+
+st.session_state.systolic_bp = systolic_bp
+st.session_state.diastolic_bp = diastolic_bp
+st.session_state.emergency_button = emergency_button
 
 st.divider()
 
@@ -684,6 +1014,26 @@ if "health_monitor" not in st.session_state:
 
 health_monitor = st.session_state.health_monitor
 
+# ============================================================
+# AI RISK SCORING
+# ============================================================
+
+if "risk_scoring" not in st.session_state:
+
+    st.session_state.risk_scoring = (
+        create_risk_scoring()
+    )
+
+risk_scoring = st.session_state.risk_scoring
+
+if "ai_risk_scorer" not in st.session_state:
+
+    st.session_state.ai_risk_scorer = (
+        create_ai_risk_scorer()
+    )
+
+ai_risk_scorer = st.session_state.ai_risk_scorer
+
 # ------------------------------------------------------------
 # CURRENT SENSOR VALUES
 # ------------------------------------------------------------
@@ -696,7 +1046,7 @@ value_col1, value_col2, value_col3 = st.columns(3)
 with value_col1:
 
     st.metric(
-        "❤️ Heart Rate",
+        "Heart Rate",
         f"{heart_rate_sensor.read():.0f} BPM"
     )
 
@@ -704,7 +1054,7 @@ with value_col1:
 with value_col2:
 
     st.metric(
-        "🫁 SpO2",
+        "SpO2",
         f"{spo2_sensor.read():.0f} %"
     )
 
@@ -712,7 +1062,7 @@ with value_col2:
 with value_col3:
 
     st.metric(
-        "🌡️ Temperature",
+        "Temperature",
         f"{temperature_sensor.read():.1f} °C"
     )
 
@@ -739,14 +1089,129 @@ health_result = health_monitor.check_all(
 if health_result["alert"]:
 
     st.error(
-        "⚠️ ABNORMAL HEALTH READING DETECTED"
+        "ABNORMAL HEALTH READING DETECTED"
     )
 
 else:
 
     st.success(
-        "✅ HEALTH READINGS WITHIN CONFIGURED RANGE"
+        "HEALTH READINGS WITHIN CONFIGURED RANGE"
     )
+
+# ============================================================
+# AI RISK ASSESSMENT
+# ============================================================
+
+risk_result = risk_scoring.calculate_score(
+
+    heart_rate_alert=(
+        health_result["heart_rate"]["alert"]
+    ),
+
+    spo2_alert=(
+        health_result["spo2"]["alert"]
+    ),
+
+    temperature_alert=(
+        health_result["temperature"]["alert"]
+    ),
+
+    inactivity_alert=st.session_state.get(
+        "live_inactivity_alert",
+        False
+    ),
+
+    possible_fall=st.session_state.get(
+        "live_possible_fall",
+        False
+    ),
+
+    confirmed_fall=st.session_state.get(
+        "live_confirmed_fall",
+        False
+    )
+)
+
+# ============================================================
+# AI MODEL RISK PREDICTION
+# ============================================================
+
+ai_risk_result = ai_risk_scorer.predict(
+
+    heart_rate=heart_rate_sensor.read(),
+
+    spo2=spo2_sensor.read(),
+
+    systolic_bp=st.session_state.get(
+        "systolic_bp",
+        118
+    ),
+
+    diastolic_bp=st.session_state.get(
+        "diastolic_bp",
+        76
+    ),
+
+    temperature=temperature_sensor.read(),
+
+    inactivity_duration=st.session_state.get(
+        "live_inactivity_duration",
+        0
+    ),
+
+    possible_fall=st.session_state.get(
+        "live_possible_fall",
+        False
+    ),
+
+    confirmed_fall=st.session_state.get(
+        "live_confirmed_fall",
+        False
+    ),
+
+    emergency_button=st.session_state.get(
+        "emergency_button",
+        False
+    )
+)
+
+# ============================================================
+# AI RISK ASSESSMENT DISPLAY
+# ============================================================
+
+st.header("AI Risk Assessment")
+
+risk_col1, risk_col2, risk_col3 = st.columns(3)
+
+with risk_col1:
+
+    st.metric(
+        "AI Risk Score",
+        f"{ai_risk_result['risk_score']} / 100"
+    )
+
+
+with risk_col2:
+
+    st.metric(
+        "AI Risk Level",
+        ai_risk_result["risk_level"]
+    )
+
+
+with risk_col3:
+
+    st.metric(
+        "AI Confidence",
+        f"{ai_risk_result['confidence']:.2f}%"
+    )
+
+
+st.write("**Risk Factors:**")
+
+for reason in ai_risk_result["reasons"]:
+
+    st.write(f"• {reason}")
 
 # ------------------------------------------------------------
 # AUTOMATIC HEALTH EMERGENCY TRIGGER
@@ -796,6 +1261,34 @@ else:
 
     # Reset after readings return to normal
     st.session_state.health_emergency_active = False
+
+# ------------------------------------------------------------
+# AI RISK-BASED EMERGENCY DECISION
+# ------------------------------------------------------------
+
+if ai_risk_result["risk_level"] == "CRITICAL":
+
+    st.error(
+        "CRITICAL RISK: Emergency verification required."
+    )
+
+elif ai_risk_result["risk_level"] == "HIGH":
+
+    st.warning(
+        "HIGH RISK: Close monitoring required."
+    )
+
+elif ai_risk_result["risk_level"] == "MODERATE":
+
+    st.warning(
+        "MODERATE RISK: Continue monitoring."
+    )
+
+else:
+
+    st.success(
+        "LOW RISK: No immediate risk detected."
+    )
 
 # ------------------------------------------------------------
 # INDIVIDUAL SENSOR STATUS
@@ -858,7 +1351,6 @@ with status_col3:
             f"{temperature_status['status']}"
         )
 
-
 # ------------------------------------------------------------
 # ALERT DETAILS
 # ------------------------------------------------------------
@@ -900,7 +1392,7 @@ st.info(
     "software pipeline. It does not contact real emergency services."
 )
 
-if st.button("🚨 Test Emergency System"):
+if st.button("Test Emergency System"):
 
     try:
 
@@ -963,7 +1455,7 @@ if emergency_alerts:
         incident_reason = incident[3]
 
         st.error(
-            "🚨 POSSIBLE EMERGENCY"
+            "POSSIBLE EMERGENCY"
         )
 
         st.write(
@@ -987,7 +1479,7 @@ if emergency_alerts:
 else:
 
     st.success(
-        "✅ No emergency alerts recorded."
+        "No emergency alerts recorded."
     )
 
 
@@ -1065,7 +1557,7 @@ if incidents:
         emergency_status = latest_emergency[4]
 
         st.error(
-            f"🚨 {emergency_status}"
+            f"{emergency_status}"
         )
 
         detail_col1, detail_col2 = st.columns(2)

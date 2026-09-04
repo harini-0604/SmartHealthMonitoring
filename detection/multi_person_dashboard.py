@@ -18,6 +18,10 @@ HORIZONTAL_ANGLE_THRESHOLD = 45
 MOVEMENT_WINDOW = 8
 FALL_CONFIRMATION_TIME = 2.0
 
+# Abnormal inactivity settings
+MOVEMENT_THRESHOLD = 0.02
+INACTIVITY_WARNING_TIME = 60
+
 
 # ============================================================
 # INITIALIZATION
@@ -41,7 +45,12 @@ def create_person_state():
         "previous_time": None,
         "fall_candidate": False,
         "fall_confirmed": False,
-        "fall_candidate_start": None
+        "fall_candidate_start": None,
+
+        # Inactivity tracking
+        "last_movement_time": None,
+        "inactivity_duration": 0.0,
+        "inactivity_alert": False
     }
 
 
@@ -271,6 +280,36 @@ def process_person(
                 / delta_time
             )
 
+            # --------------------------------------------------------
+            # INACTIVITY DETECTION
+            # --------------------------------------------------------
+             
+            if state["last_movement_time"] is None:
+
+                state["last_movement_time"] = current_time
+
+            movement_detected = (
+                abs(vertical_speed)
+                >= MOVEMENT_THRESHOLD
+            )
+
+            if movement_detected:
+
+                state["last_movement_time"] = current_time
+
+                state["inactivity_alert"] = False
+
+            state["inactivity_duration"] = (
+                current_time
+                - state["last_movement_time"]
+            )
+
+            if (
+                state["inactivity_duration"]
+                >= INACTIVITY_WARNING_TIME
+            ):
+
+                state["inactivity_alert"] = True
 
     # --------------------------------------------------------
     # HISTORY
@@ -739,31 +778,55 @@ def process_multi_person_frame(
                 "vertical_speed": vertical_speed,
 
                 "fall_confirmed":
-                    state["fall_confirmed"]
+                    state["fall_confirmed"],
+
+                "inactivity_duration":
+                    state["inactivity_duration"],
+
+                "inactivity_alert":
+                    state["inactivity_alert"]
 
             })
 
+            # ------------------------------------------------ 
+            # INACTIVITY
+            # ------------------------------------------------
+            
+            inactivity_duration = state["inactivity_duration"]
 
-    # --------------------------------------------------------
-    # REMOVE OLD STATES
-    # --------------------------------------------------------
+            cv2.putText(
+                annotated_frame,
+                f"Inactivity: {inactivity_duration:.0f}s",
+                (
+                    x1,
+                    min(
+                        frame_height - 30,
+                        y2 + 40
+                    )
+                ),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.50,
+                (255, 255, 255),
+                1
+            )
 
-    old_ids = [
+            if state["inactivity_alert"]:
 
-        track_id
-
-        for track_id in person_states
-
-        if track_id not in current_ids
-
-    ]
-
-
-    for track_id in old_ids:
-
-        del person_states[
-            track_id
-        ]
+                cv2.putText(
+                    annotated_frame,
+                    "ABNORMAL INACTIVITY",
+                    (
+                        x1,
+                        min(
+                            frame_height - 10,
+                            y2 + 60
+                        )
+                    ),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (0, 0, 255),
+                    2
+                )
 
 
     # --------------------------------------------------------

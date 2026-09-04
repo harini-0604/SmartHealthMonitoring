@@ -1,389 +1,383 @@
 import cv2
 import mediapipe as mp
-from datetime import datetime
-import math
+from ultralytics import YOLO
 
 
 # ============================================================
-# POSE ESTIMATION
+# MULTI-PERSON POSE ESTIMATION
 # ============================================================
 
-def run_pose_detection():
+CONFIDENCE_THRESHOLD = 0.50
 
-    # --------------------------------------------------------
-    # Initialize MediaPipe Pose
-    # --------------------------------------------------------
+model = YOLO("yolo11n.pt")
 
-    mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
+mp_pose = mp.solutions.pose
+mp_drawing = mp.solutions.drawing_utils
 
-    pose = mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=1,
-        enable_segmentation=False,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
+
+# ============================================================
+# DRAW PERSON LABEL
+# ============================================================
+
+def draw_person_label(
+    frame,
+    x1,
+    y1,
+    person_id
+):
+
+    label = f"Person {person_id}"
+
+    cv2.rectangle(
+        frame,
+        (x1, max(0, y1 - 32)),
+        (x1 + 120, y1),
+        (255, 0, 0),
+        -1
+    )
+
+    cv2.putText(
+        frame,
+        label,
+        (x1 + 6, y1 - 9),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (255, 255, 255),
+        2
     )
 
 
-    # --------------------------------------------------------
-    # Open webcam
-    # --------------------------------------------------------
+# ============================================================
+# MULTI-PERSON POSE DETECTION
+# ============================================================
+
+def run_pose_detection():
 
     camera = cv2.VideoCapture(0)
 
     if not camera.isOpened():
 
-        print(
-            "ERROR: Could not open the camera."
-        )
-
-        pose.close()
+        print("ERROR: Could not open camera.")
 
         return False
 
-
-    # --------------------------------------------------------
-    # START MESSAGE
-    # --------------------------------------------------------
-
-    print("=" * 60)
+    print("=" * 70)
     print("SMART HEALTH MONITORING SYSTEM")
-    print("POSE ESTIMATION STARTED")
-    print("=" * 60)
+    print("MULTI-PERSON POSE ESTIMATION")
+    print("=" * 70)
     print("Press Q to close.\n")
 
+    try:
 
-    # ========================================================
-    # HELPER FUNCTION
-    # ========================================================
+        while True:
 
-    def get_landmark(
-        landmarks,
-        landmark_name
-    ):
-        """
-        Return x, y, z and visibility
-        for a MediaPipe landmark.
-        """
+            ret, frame = camera.read()
 
-        landmark_id = getattr(
-            mp_pose.PoseLandmark,
-            landmark_name
-        )
+            if not ret:
 
-        point = landmarks.landmark[
-            landmark_id
-        ]
+                print(
+                    "ERROR: Could not read camera frame."
+                )
 
-        return (
-            point.x,
-            point.y,
-            point.z,
-            point.visibility
-        )
+                break
 
-
-    # ========================================================
-    # MAIN LOOP
-    # ========================================================
-
-    while True:
-
-        # ----------------------------------------------------
-        # Read camera frame
-        # ----------------------------------------------------
-
-        ret, frame = camera.read()
-
-        if not ret:
-
-            print(
-                "ERROR: Could not read camera frame."
-            )
-
-            break
-
-
-        # ----------------------------------------------------
-        # Convert BGR → RGB
-        # ----------------------------------------------------
-
-        rgb_frame = cv2.cvtColor(
-            frame,
-            cv2.COLOR_BGR2RGB
-        )
-
-
-        # ----------------------------------------------------
-        # Process frame with MediaPipe
-        # ----------------------------------------------------
-
-        results = pose.process(
-            rgb_frame
-        )
-
-
-        # ====================================================
-        # POSE DETECTED
-        # ====================================================
-
-        if results.pose_landmarks:
-
-            landmarks = results.pose_landmarks
-
+            frame_height, frame_width = frame.shape[:2]
 
             # ------------------------------------------------
-            # Important body landmarks
+            # YOLO PERSON DETECTION
             # ------------------------------------------------
 
-            nose = get_landmark(
-                landmarks,
-                "NOSE"
-            )
-
-            left_shoulder = get_landmark(
-                landmarks,
-                "LEFT_SHOULDER"
-            )
-
-            right_shoulder = get_landmark(
-                landmarks,
-                "RIGHT_SHOULDER"
-            )
-
-            left_hip = get_landmark(
-                landmarks,
-                "LEFT_HIP"
-            )
-
-            right_hip = get_landmark(
-                landmarks,
-                "RIGHT_HIP"
-            )
-
-            left_knee = get_landmark(
-                landmarks,
-                "LEFT_KNEE"
-            )
-
-            right_knee = get_landmark(
-                landmarks,
-                "RIGHT_KNEE"
-            )
-
-            left_ankle = get_landmark(
-                landmarks,
-                "LEFT_ANKLE"
-            )
-
-            right_ankle = get_landmark(
-                landmarks,
-                "RIGHT_ANKLE"
-            )
-
-
-            # ------------------------------------------------
-            # Calculate shoulder center
-            # ------------------------------------------------
-
-            shoulder_x = (
-                left_shoulder[0]
-                + right_shoulder[0]
-            ) / 2
-
-            shoulder_y = (
-                left_shoulder[1]
-                + right_shoulder[1]
-            ) / 2
-
-
-            # ------------------------------------------------
-            # Calculate hip center
-            # ------------------------------------------------
-
-            hip_x = (
-                left_hip[0]
-                + right_hip[0]
-            ) / 2
-
-            hip_y = (
-                left_hip[1]
-                + right_hip[1]
-            ) / 2
-
-
-            # ------------------------------------------------
-            # Calculate body angle
-            # ------------------------------------------------
-
-            dx = hip_x - shoulder_x
-            dy = hip_y - shoulder_y
-
-            angle = math.degrees(
-                math.atan2(dy, dx)
-            )
-
-
-            # ------------------------------------------------
-            # Draw skeleton
-            # ------------------------------------------------
-
-            mp_drawing.draw_landmarks(
+            results = model(
                 frame,
-                landmarks,
-                mp_pose.POSE_CONNECTIONS
+                classes=[0],
+                conf=CONFIDENCE_THRESHOLD,
+                verbose=False
             )
 
+            persons = []
 
-        # ----------------------------------------------------
-        # Display camera
-        # ----------------------------------------------------
+            for result in results:
 
-        cv2.imshow(
-            "Smart Health Monitoring - Pose Estimation",
-            frame
-        )
+                for box in result.boxes:
 
+                    confidence = float(
+                        box.conf[0]
+                    )
 
-        # ----------------------------------------------------
-        # Press Q to close
-        # ----------------------------------------------------
+                    if confidence < CONFIDENCE_THRESHOLD:
+                        continue
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+                    x1, y1, x2, y2 = map(
+                        int,
+                        box.xyxy[0]
+                    )
 
-            break
+                    x1 = max(0, x1)
+                    y1 = max(0, y1)
+                    x2 = min(frame_width, x2)
+                    y2 = min(frame_height, y2)
 
+                    if x2 <= x1 or y2 <= y1:
+                        continue
 
-    # ========================================================
-    # CLEANUP
-    # ========================================================
+                    persons.append(
+                        (x1, y1, x2, y2)
+                    )
 
-    camera.release()
+            # ------------------------------------------------
+            # SORT PERSONS LEFT → RIGHT
+            # ------------------------------------------------
 
-    cv2.destroyAllWindows()
+            persons.sort(
+                key=lambda box: box[0]
+            )
 
-    pose.close()
+            # ------------------------------------------------
+            # PROCESS EACH PERSON SEPARATELY
+            # ------------------------------------------------
 
+            for person_id, (
+                x1,
+                y1,
+                x2,
+                y2
+            ) in enumerate(persons, start=1):
 
-    print()
-    print("Pose estimation stopped.")
+                person_crop = frame[
+                    y1:y2,
+                    x1:x2
+                ]
 
+                if person_crop.size == 0:
+                    continue
+
+                rgb_crop = cv2.cvtColor(
+                    person_crop,
+                    cv2.COLOR_BGR2RGB
+                )
+
+                # Separate pose estimator for this person
+                with mp_pose.Pose(
+                    static_image_mode=True,
+                    model_complexity=1,
+                    enable_segmentation=False,
+                    min_detection_confidence=0.5
+                ) as pose:
+
+                    pose_results = pose.process(
+                        rgb_crop
+                    )
+
+                # ------------------------------------------------
+                # PERSON BOX
+                # ------------------------------------------------
+
+                cv2.rectangle(
+                    frame,
+                    (x1, y1),
+                    (x2, y2),
+                    (255, 0, 0),
+                    3
+                )
+
+                # ------------------------------------------------
+                # PERSON LABEL
+                # ------------------------------------------------
+
+                draw_person_label(
+                    frame,
+                    x1,
+                    y1,
+                    person_id
+                )
+
+                # ------------------------------------------------
+                # DRAW POSE INSIDE PERSON BOX
+                # ------------------------------------------------
+
+                if pose_results.pose_landmarks:
+
+                    mp_drawing.draw_landmarks(
+                        person_crop,
+                        pose_results.pose_landmarks,
+                        mp_pose.POSE_CONNECTIONS,
+                        mp_drawing.DrawingSpec(
+                            color=(0, 0, 255),
+                            thickness=3,
+                            circle_radius=4
+                        ),
+                        mp_drawing.DrawingSpec(
+                            color=(255, 0, 0),
+                            thickness=3,
+                            circle_radius=3
+                        )
+                    )
+
+                    frame[
+                        y1:y2,
+                        x1:x2
+                    ] = person_crop
+
+            # ------------------------------------------------
+            # TOTAL PEOPLE
+            # ------------------------------------------------
+
+            cv2.putText(
+                frame,
+                f"People Detected: {len(persons)}",
+                (20, 35),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 0, 0),
+                3
+            )
+
+            # ------------------------------------------------
+            # DISPLAY
+            # ------------------------------------------------
+
+            cv2.imshow(
+                "Smart Health Monitoring - Multi Person Pose",
+                frame
+            )
+
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                break
+
+    finally:
+
+        camera.release()
+
+        cv2.destroyAllWindows()
+
+    print("\nMulti-person pose estimation stopped.")
 
     return True
 
 
 # ============================================================
-# DIRECT TEST
+# DASHBOARD FRAME FUNCTION
 # ============================================================
 
-if __name__ == "__main__":
+def process_pose_frame(frame, pose=None):
 
-    run_pose_detection()
-
-# ============================================================
-# REAL-TIME FRAME POSE DETECTION
-# ============================================================
-
-def process_pose_frame(
-    frame,
-    pose
-):
-
-    mp_pose = mp.solutions.pose
-    mp_drawing = mp.solutions.drawing_utils
-
-    rgb_frame = cv2.cvtColor(
+    results = model(
         frame,
-        cv2.COLOR_BGR2RGB
+        classes=[0],
+        conf=CONFIDENCE_THRESHOLD,
+        verbose=False
     )
 
-    results = pose.process(
-        rgb_frame
+    persons = []
+
+    for result in results:
+
+        for box in result.boxes:
+
+            confidence = float(
+                box.conf[0]
+            )
+
+            if confidence < CONFIDENCE_THRESHOLD:
+                continue
+
+            x1, y1, x2, y2 = map(
+                int,
+                box.xyxy[0]
+            )
+
+            persons.append(
+                (x1, y1, x2, y2)
+            )
+
+    persons.sort(
+        key=lambda box: box[0]
     )
 
-    pose_detected = False
+    pose_detected = len(persons) > 0
+
     body_angle = None
 
-    if results.pose_landmarks:
+    for person_id, (
+        x1,
+        y1,
+        x2,
+        y2
+    ) in enumerate(persons, start=1):
 
-        pose_detected = True
+        crop = frame[
+            y1:y2,
+            x1:x2
+        ]
 
-        landmarks = results.pose_landmarks
+        if crop.size == 0:
+            continue
 
-        def get_landmark(
-            landmark_name
-        ):
+        rgb_crop = cv2.cvtColor(
+            crop,
+            cv2.COLOR_BGR2RGB
+        )
 
-            landmark_id = getattr(
-                mp_pose.PoseLandmark,
-                landmark_name
+        with mp_pose.Pose(
+            static_image_mode=True,
+            model_complexity=1,
+            enable_segmentation=False,
+            min_detection_confidence=0.5
+        ) as person_pose:
+
+            results_pose = person_pose.process(
+                rgb_crop
             )
 
-            point = landmarks.landmark[
-                landmark_id
-            ]
-
-            return (
-                point.x,
-                point.y,
-                point.z,
-                point.visibility
-            )
-
-        left_shoulder = get_landmark(
-            "LEFT_SHOULDER"
-        )
-
-        right_shoulder = get_landmark(
-            "RIGHT_SHOULDER"
-        )
-
-        left_hip = get_landmark(
-            "LEFT_HIP"
-        )
-
-        right_hip = get_landmark(
-            "RIGHT_HIP"
-        )
-
-        shoulder_x = (
-            left_shoulder[0]
-            + right_shoulder[0]
-        ) / 2
-
-        shoulder_y = (
-            left_shoulder[1]
-            + right_shoulder[1]
-        ) / 2
-
-        hip_x = (
-            left_hip[0]
-            + right_hip[0]
-        ) / 2
-
-        hip_y = (
-            left_hip[1]
-            + right_hip[1]
-        ) / 2
-
-        dx = hip_x - shoulder_x
-        dy = hip_y - shoulder_y
-
-        body_angle = math.degrees(
-            math.atan2(dy, dx)
-        )
-
-        mp_drawing.draw_landmarks(
+        cv2.rectangle(
             frame,
-            landmarks,
-            mp_pose.POSE_CONNECTIONS
+            (x1, y1),
+            (x2, y2),
+            (255, 0, 0),
+            3
         )
 
-    
+        draw_person_label(
+            frame,
+            x1,
+            y1,
+            person_id
+        )
+
+        if results_pose.pose_landmarks:
+
+            mp_drawing.draw_landmarks(
+                crop,
+                results_pose.pose_landmarks,
+                mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(
+                    color=(0, 0, 255),
+                    thickness=3,
+                    circle_radius=4
+                ),
+                mp_drawing.DrawingSpec(
+                    color=(255, 0, 0),
+                    thickness=3,
+                    circle_radius=3
+                )
+            )
+
+            frame[
+                y1:y2,
+                x1:x2
+            ] = crop
 
     return (
         frame,
         pose_detected,
         body_angle
     )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+
+    run_pose_detection()
