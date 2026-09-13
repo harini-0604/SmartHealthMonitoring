@@ -2,36 +2,37 @@ import sys
 from pathlib import Path
 from datetime import datetime
 import threading
+import time
 
 import cv2
 import streamlit as st
-import mediapipe as mp
 
+import csv
+import os
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+DASHBOARD_DIR = Path(__file__).resolve().parent
 
-from database.database import get_incidents
+if str(DASHBOARD_DIR) not in sys.path:
+    sys.path.insert(0, str(DASHBOARD_DIR))
+
+from auth_ui import patient_authentication
+
+from database.database import (
+    get_incidents,
+    get_ambulance_status
+)
 from emergency.emergency_manager import handle_emergency
 from emergency.verification import EmergencyVerification
 from emergency.emergency_manager import handle_verified_emergency
-from detection.person_detection import (
-    run_person_detection, 
-    process_person_frame)
-from detection.pose_detection import (
-    run_pose_detection,
-    process_pose_frame)
-from detection.fall_detection import (
-    run_fall_detection,
-    process_fall_frame)
-from detection.activity_detection import run_activity_detection
 from detection.multi_person_dashboard import (
     process_multi_person_frame
 )
-from ultralytics import YOLO
+
 
 from sensors.esp32 import get_esp32_connection
 from sensors.heart_rate import create_heart_rate_sensor
@@ -40,6 +41,15 @@ from sensors.temperature import create_temperature_sensor
 from sensors.health_monitor import create_health_monitor
 from sensors.risk_scoring import create_risk_scoring
 from ai.risk_ai import create_ai_risk_scorer
+from ai.multimodal_risk_ai import create_multimodal_risk_ai
+
+from data.multimodal_logger import MultimodalDataLogger
+from data.ground_truth import GroundTruthLogger
+from data.risk_ground_truth import RiskGroundTruthLogger
+from evaluation.evaluation_engine import create_ai_evaluation_engine
+from data.sample_id import create_sample_id_generator
+
+SHOW_DEVELOPMENT_SECTIONS = False
 
 LOG_FILE = PROJECT_ROOT / "logs" / "emergency_log.txt"
 
@@ -50,6 +60,30 @@ st.set_page_config(
     layout="wide"
 )
 
+# ============================================================
+# PATIENT AUTHENTICATION
+# ============================================================
+
+if "patient_logged_in" not in st.session_state:
+    st.session_state.patient_logged_in = False
+
+
+if not st.session_state.patient_logged_in:
+
+    patient_authentication()
+
+    st.stop()
+
+
+# ============================================================
+# LOGOUT
+# ============================================================
+
+if st.sidebar.button("Logout"):
+
+    st.session_state.patient_logged_in = False
+
+    st.rerun()
 
 st.title("Smart Health Monitoring System")
 st.subheader("AI-Based Health Monitoring and Emergency Response")
@@ -91,6 +125,44 @@ if "simulated_fall_active" not in st.session_state:
     st.session_state.simulated_fall_active = False
 
 # ============================================================
+# HEALTH TEST VALIDATION STATE
+# ============================================================
+
+if "health_test_stage" not in st.session_state:
+
+    st.session_state.health_test_stage = "IDLE"
+
+
+if "health_test_start_time" not in st.session_state:
+
+    st.session_state.health_test_start_time = None
+
+
+if "health_test_1" not in st.session_state:
+
+    st.session_state.health_test_1 = None
+
+
+if "health_test_2" not in st.session_state:
+
+    st.session_state.health_test_2 = None
+
+
+if "health_test_3" not in st.session_state:
+
+    st.session_state.health_test_3 = None
+
+
+if "health_test_final" not in st.session_state:
+
+    st.session_state.health_test_final = None
+
+
+if "health_test_message" not in st.session_state:
+
+    st.session_state.health_test_message = ""
+
+# ============================================================
 # MONITORING STATUS
 # ============================================================
 
@@ -110,77 +182,6 @@ with col3:
 
 st.divider()
 
-
-# ============================================================
-# CAMERA MONITORING
-# ============================================================
-
-st.header("Camera Monitoring")
-
-camera_col1, camera_col2, camera_col3, camera_col4 = st.columns(4)
-
-with camera_col1:
-
-    if st.button("Run Person Detection"):
-
-        st.info("Starting person detection...")
-
-        try:
-            run_person_detection()
-            st.success("Person detection completed.")
-
-        except Exception as error:
-            st.error(f"Person detection error: {error}")
-
-
-with camera_col2:
-
-    if st.button("Run Pose Detection"):
-
-        st.info("Starting pose detection...")
-
-        try:
-            run_pose_detection()
-            st.success("Pose detection completed.")
-
-        except Exception as error:
-            st.error(f"Pose detection error: {error}")
-
-
-with camera_col3:
-
-    if st.button("Run Fall Detection"):
-
-        st.warning("Starting fall detection...")
-
-        try:
-            run_fall_detection()
-            st.success("Fall detection completed.")
-
-        except Exception as error:
-            st.error(f"Fall detection error: {error}")
-
-with camera_col4:
-
-    if st.button("Run Activity Detection"):
-
-        st.info("Starting activity detection...")
-
-        try:
-            run_activity_detection()
-
-            st.success(
-                "Activity detection completed."
-            )
-
-        except Exception as error:
-
-            st.error(
-                f"Activity detection error: {error}"
-            )
-
-
-st.divider()
 
 # ============================================================
 # FALL DEMONSTRATION / SIMULATION
@@ -323,18 +324,10 @@ with detection_col1:
     st.write("Person Detection")
     st.success("Module Available")
 
-    st.write("Pose Detection")
-    st.success("Module Available")
-
-
 with detection_col2:
 
     st.write("Fall Detection")
     st.success("Module Available")
-
-    st.write("Activity Detection")
-    st.success("Module Available")
-
 
 st.divider()
 
@@ -376,9 +369,10 @@ if start_live_camera:
     #Current camera location
     CAMERA_ROOM = "Living Room"
 
-    model = YOLO("yolo11n.pt")
 
-    camera = cv2.VideoCapture(0)
+
+    CAMERA_SOURCE = 0
+    camera = cv2.VideoCapture(CAMERA_SOURCE)
 
     emergency_alert_sent = False
 
@@ -463,6 +457,11 @@ if start_live_camera:
                     for person in people
                 )
 
+
+                st.session_state["live_pre_fall_risk"] = any(
+                    person.get("pre_fall_confirmed", False)
+                    for person in people
+                )
                 st.session_state["live_inactivity_alert"] = any(
                     person.get("inactivity_alert", False)
                     for person in people
@@ -472,8 +471,10 @@ if start_live_camera:
 
                 if fall_confirmed:
                     status = "FALL CONFIRMED"
+                elif st.session_state.get("live_pre_fall_risk", False):
+                    status = "PRE-FALL RISK"
                 elif people:
-                    status = "NORMAL" 
+                    status = "NORMAL"
                 else:
                     status = "NO PERSON DETECTED"
 
@@ -856,6 +857,8 @@ if esp32.connected:
         f"{esp32_data.get('source', 'ESP32')}"
     )
 
+    # Store ESP32 readings for Health Test Validation
+    st.session_state.esp32_sensor_data = esp32_data
 
 else:
 
@@ -987,18 +990,8 @@ with bp_col2:
         step=1
     )
 
-
-with bp_col3:
-
-    emergency_button = st.checkbox(
-        "🔴 Finger Emergency Button",
-        value=False
-    )
-
-
 st.session_state.systolic_bp = systolic_bp
 st.session_state.diastolic_bp = diastolic_bp
-st.session_state.emergency_button = emergency_button
 
 st.divider()
 
@@ -1033,6 +1026,55 @@ if "ai_risk_scorer" not in st.session_state:
     )
 
 ai_risk_scorer = st.session_state.ai_risk_scorer
+
+if "multimodal_risk_ai" not in st.session_state:
+
+    st.session_state.multimodal_risk_ai = (
+        create_multimodal_risk_ai()
+    )
+
+multimodal_risk_ai = st.session_state.multimodal_risk_ai
+
+if "multimodal_logger" not in st.session_state:
+
+    st.session_state.multimodal_logger = (
+        MultimodalDataLogger()
+    )
+
+multimodal_logger = st.session_state.multimodal_logger
+
+if "ground_truth_logger" not in st.session_state:
+    st.session_state.ground_truth_logger = (
+        GroundTruthLogger()
+    )
+
+ground_truth_logger = st.session_state.ground_truth_logger
+
+if "risk_ground_truth_logger" not in st.session_state:
+    st.session_state.risk_ground_truth_logger = (
+        RiskGroundTruthLogger()
+    )
+
+risk_ground_truth_logger = (
+    st.session_state.risk_ground_truth_logger
+)
+
+
+if "ai_evaluation_engine" not in st.session_state:
+    st.session_state.ai_evaluation_engine = (
+        create_ai_evaluation_engine()
+    )
+
+ai_evaluation_engine = (
+    st.session_state.ai_evaluation_engine
+)
+
+if "sample_id_generator" not in st.session_state:
+    st.session_state.sample_id_generator = (
+        create_sample_id_generator()
+    )
+
+sample_id_generator = st.session_state.sample_id_generator
 
 # ------------------------------------------------------------
 # CURRENT SENSOR VALUES
@@ -1072,6 +1114,267 @@ st.success(
 )
 
 st.divider()
+
+# ============================================================
+# HEALTH TEST VALIDATION SYSTEM
+# ============================================================
+
+st.header("Health Test Validation")
+
+st.info(
+    "The system performs multiple health tests with a "
+    "stabilization period before AI risk assessment."
+)
+# ------------------------------------------------------------
+# HELPER: GET CURRENT HEALTH VALUES
+# ------------------------------------------------------------
+
+def get_current_health_values():
+
+    # Use ESP32 data when connected
+    if esp32.connected:
+
+        data = st.session_state.get(
+            "esp32_sensor_data",
+            {}
+        )
+
+        return {
+            "heart_rate": data.get(
+                "heart_rate",
+                heart_rate_sensor.read()
+            ),
+            "spo2": data.get(
+                "spo2",
+                spo2_sensor.read()
+            ),
+            "temperature": data.get(
+                "temperature",
+                temperature_sensor.read()
+            ),
+            "systolic_bp": data.get(
+                "systolic_bp",
+                st.session_state.get(
+                    "systolic_bp",
+                    118
+                )
+            ),
+            "diastolic_bp": data.get(
+                "diastolic_bp",
+                st.session_state.get(
+                    "diastolic_bp",
+                    76
+                )
+            )
+        }
+
+    # Fallback to software simulation
+    return {
+        "heart_rate": heart_rate_sensor.read(),
+        "spo2": spo2_sensor.read(),
+        "temperature": temperature_sensor.read(),
+        "systolic_bp": st.session_state.get(
+            "systolic_bp",
+            118
+        ),
+        "diastolic_bp": st.session_state.get(
+            "diastolic_bp",
+            76
+        )
+    }
+
+# ------------------------------------------------------------
+# TEST CONTROL
+# ------------------------------------------------------------
+
+test_col1, test_col2 = st.columns(2)
+
+with test_col1:
+
+    if st.button(
+        "▶ Start Health Test",
+        disabled=(
+            st.session_state.health_test_stage
+            not in ["IDLE", "COMPLETED"]
+        )
+    ):
+
+        # Capture Test 1
+        st.session_state.health_test_1 = (
+            get_current_health_values()
+        )
+
+        st.session_state.health_test_start_time = (
+            datetime.now()
+        )
+
+        st.session_state.health_test_stage = (
+            "WAITING_FOR_TEST_2"
+        )
+
+        st.rerun()
+
+
+with test_col2:
+
+    if st.button(
+        "Reset Health Test",
+        disabled=(
+            st.session_state.health_test_stage
+            == "IDLE"
+        )
+    ):
+
+        st.session_state.health_test_stage = "IDLE"
+
+        st.session_state.health_test_start_time = None
+
+        st.session_state.health_test_1 = None
+
+        st.session_state.health_test_2 = None
+
+        st.session_state.health_test_3 = None
+
+        st.session_state.health_test_final = None
+
+        st.session_state.health_test_message = ""
+
+        st.rerun()
+
+# ------------------------------------------------------------
+# DEVELOPMENT TEST MODE
+# ------------------------------------------------------------
+
+with st.expander("Developer Test Settings"):
+
+    test_wait_minutes = st.number_input(
+        "Stabilization time (minutes)",
+        min_value=0.1,
+        max_value=5.0,
+        value=5.0,
+        step=0.1
+    )
+
+    st.session_state.health_test_wait_time = (
+        int(test_wait_minutes * 60)
+    )
+
+# ------------------------------------------------------------
+# 5-MINUTE STABILIZATION PERIOD
+# ------------------------------------------------------------
+
+# ------------------------------------------------------------
+# 5-MINUTE STABILIZATION PERIOD
+# ------------------------------------------------------------
+
+if (
+    st.session_state.health_test_stage
+    == "WAITING_FOR_TEST_2"
+):
+
+    elapsed_seconds = (
+        datetime.now()
+        - st.session_state.health_test_start_time
+    ).total_seconds()
+
+    stabilization_time = st.session_state.get(
+        "health_test_wait_time",
+        300
+    )
+
+    remaining_seconds = max(
+        0,
+        int(stabilization_time - elapsed_seconds)
+    )
+
+    minutes = remaining_seconds // 60
+    seconds = remaining_seconds % 60
+
+    st.warning(
+        "TEST 1 COMPLETED — Stabilization period active"
+    )
+
+    st.subheader(
+        f"TEST 2 will be available in "
+        f"{minutes:02d}:{seconds:02d}"
+    )
+
+    st.progress(
+        min(
+            elapsed_seconds / stabilization_time,
+            1.0
+        )
+    )
+
+    st.info(
+        "AI risk assessment is paused during the "
+        "stabilization period."
+    )
+
+    # Automatically refresh the dashboard every second
+    # so the countdown visibly decreases.
+    if remaining_seconds > 0:
+
+        time.sleep(1)
+
+        st.rerun()
+
+    else:
+
+        st.session_state.health_test_stage = (
+            "READY_FOR_TEST_2"
+        )
+
+        st.rerun()
+
+
+# ------------------------------------------------------------
+# TEST 2
+# ------------------------------------------------------------
+
+if (
+    st.session_state.health_test_stage
+    == "READY_FOR_TEST_2"
+):
+
+    st.success(
+        "5-minute stabilization completed. "
+        "Test 2 is ready."
+    )
+
+    if st.button("▶ Perform Test 2"):
+
+        st.session_state.health_test_2 = (
+            get_current_health_values()
+        )
+
+        st.session_state.health_test_stage = (
+            "COMPARING"
+        )
+
+        st.rerun()
+
+
+# ------------------------------------------------------------
+# DISPLAY TEST RESULTS
+# ------------------------------------------------------------
+
+if st.session_state.health_test_1 is not None:
+
+    st.write("### Test 1")
+
+    st.json(
+        st.session_state.health_test_1
+    )
+
+
+if st.session_state.health_test_2 is not None:
+
+    st.write("### Test 2")
+
+    st.json(
+        st.session_state.health_test_2
+    )
 
 # ============================================================
 # HEALTH STATUS
@@ -1126,169 +1429,660 @@ risk_result = risk_scoring.calculate_score(
         False
     ),
 
-    confirmed_fall=st.session_state.get(
-        "live_confirmed_fall",
-        False
-    )
-)
-
-# ============================================================
-# AI MODEL RISK PREDICTION
-# ============================================================
-
-ai_risk_result = ai_risk_scorer.predict(
-
-    heart_rate=heart_rate_sensor.read(),
-
-    spo2=spo2_sensor.read(),
-
-    systolic_bp=st.session_state.get(
-        "systolic_bp",
-        118
-    ),
-
-    diastolic_bp=st.session_state.get(
-        "diastolic_bp",
-        76
-    ),
-
-    temperature=temperature_sensor.read(),
-
-    inactivity_duration=st.session_state.get(
-        "live_inactivity_duration",
-        0
-    ),
-
-    possible_fall=st.session_state.get(
-        "live_possible_fall",
+    pre_fall_risk=st.session_state.get(
+        "live_pre_fall_risk",
         False
     ),
 
     confirmed_fall=st.session_state.get(
         "live_confirmed_fall",
         False
-    ),
-
-    emergency_button=st.session_state.get(
-        "emergency_button",
-        False
     )
+
 )
-
-# ============================================================
-# AI RISK ASSESSMENT DISPLAY
+# HEALTH STATUS + VALIDATED AI ASSESSMENT
 # ============================================================
 
-st.header("AI Risk Assessment")
-
-risk_col1, risk_col2, risk_col3 = st.columns(3)
-
-with risk_col1:
-
-    st.metric(
-        "AI Risk Score",
-        f"{ai_risk_result['risk_score']} / 100"
-    )
-
-
-with risk_col2:
-
-    st.metric(
-        "AI Risk Level",
-        ai_risk_result["risk_level"]
-    )
-
-
-with risk_col3:
-
-    st.metric(
-        "AI Confidence",
-        f"{ai_risk_result['confidence']:.2f}%"
-    )
-
-
-st.write("**Risk Factors:**")
-
-for reason in ai_risk_result["reasons"]:
-
-    st.write(f"• {reason}")
+st.header("Health Status")
 
 # ------------------------------------------------------------
-# AUTOMATIC HEALTH EMERGENCY TRIGGER
+# SENSOR FLUCTUATION CHECK
 # ------------------------------------------------------------
 
-if health_result["alert"]:
+def calculate_fluctuation(test1, test2):
 
-    if not st.session_state.health_emergency_active:
+    differences = {
 
-        alert_reasons = []
+        "heart_rate": abs(
+            test1["heart_rate"]
+            - test2["heart_rate"]
+        ),
 
-        for alert in health_result["alerts"]:
+        "spo2": abs(
+            test1["spo2"]
+            - test2["spo2"]
+        ),
 
-            alert_reasons.append(
-                f"{alert['reason']} "
-                f"(Value: {alert['value']})"
-            )
+        "temperature": abs(
+            test1["temperature"]
+            - test2["temperature"]
+        ),
 
-        combined_reason = "; ".join(
-            alert_reasons
+        "systolic_bp": abs(
+            test1["systolic_bp"]
+            - test2["systolic_bp"]
+        ),
+
+        "diastolic_bp": abs(
+            test1["diastolic_bp"]
+            - test2["diastolic_bp"]
+        )
+    }
+
+    thresholds = {
+
+        "heart_rate": 15.0,
+
+        "spo2": 3.0,
+
+        "temperature": 0.5,
+
+        "systolic_bp": 15.0,
+
+        "diastolic_bp": 10.0
+    }
+
+    abnormal_sensors = []
+
+    for sensor, difference in differences.items():
+
+        if difference > thresholds[sensor]:
+
+            abnormal_sensors.append(sensor)
+
+    return {
+        "differences": differences,
+        "abnormal_sensors": abnormal_sensors,
+        "large_fluctuation": bool(
+            abnormal_sensors
+        )
+    }
+
+
+# ------------------------------------------------------------
+# TEST 2 COMPARISON
+# ------------------------------------------------------------
+
+if (
+    st.session_state.health_test_stage
+    == "COMPARING"
+):
+
+    test1 = st.session_state.health_test_1
+    test2 = st.session_state.health_test_2
+
+    fluctuation = calculate_fluctuation(
+        test1,
+        test2
+    )
+
+    st.subheader(
+        "Test 1 vs Test 2 Validation"
+    )
+
+    if fluctuation["large_fluctuation"]:
+
+        st.warning(
+            "Significant sensor fluctuation detected."
         )
 
-        try:
+        st.write(
+            "Sensors requiring additional verification:"
+        )
 
-            emergency_result = handle_emergency(
-                reason=(
-                    "Abnormal health reading: "
-                    + combined_reason
-                ),
-                source="HEALTH SENSOR"
+        for sensor in fluctuation[
+            "abnormal_sensors"
+        ]:
+
+            st.write(
+                f"• {sensor}"
             )
 
-            st.session_state.health_emergency_active = True
+        st.session_state.health_test_message = (
+            "TEST 3 REQUIRED"
+        )
 
-            st.warning(
-                "Emergency response pipeline triggered "
-                "for abnormal health readings."
-            )
+        st.session_state.health_test_stage = (
+            "READY_FOR_TEST_3"
+        )
 
-        except Exception as error:
+    else:
 
-            st.error(
-                f"Health emergency handling failed: {error}"
-            )
+        st.success(
+            "Test 1 and Test 2 are sufficiently "
+            "consistent."
+        )
 
-else:
+        # ----------------------------------------------------
+        # CALCULATE AVERAGE
+        # ----------------------------------------------------
 
-    # Reset after readings return to normal
-    st.session_state.health_emergency_active = False
+        st.session_state.health_test_final = {
+
+            "heart_rate": (
+                test1["heart_rate"]
+                + test2["heart_rate"]
+            ) / 2,
+
+            "spo2": (
+                test1["spo2"]
+                + test2["spo2"]
+            ) / 2,
+
+            "temperature": (
+                test1["temperature"]
+                + test2["temperature"]
+            ) / 2,
+
+            "systolic_bp": (
+                test1["systolic_bp"]
+                + test2["systolic_bp"]
+            ) / 2,
+
+            "diastolic_bp": (
+                test1["diastolic_bp"]
+                + test2["diastolic_bp"]
+            ) / 2
+        }
+
+        st.session_state.health_test_message = (
+            "TEST 1 + TEST 2 AVERAGE USED"
+        )
+
+        st.session_state.health_test_stage = (
+            "COMPLETED"
+        )
+
+    st.rerun()
+
 
 # ------------------------------------------------------------
-# AI RISK-BASED EMERGENCY DECISION
+# TEST 3
 # ------------------------------------------------------------
 
-if ai_risk_result["risk_level"] == "CRITICAL":
-
-    st.error(
-        "CRITICAL RISK: Emergency verification required."
-    )
-
-elif ai_risk_result["risk_level"] == "HIGH":
+if (
+    st.session_state.health_test_stage
+    == "READY_FOR_TEST_3"
+):
 
     st.warning(
-        "HIGH RISK: Close monitoring required."
+        "TEST 3 REQUIRED because significant "
+        "fluctuation was detected."
     )
 
-elif ai_risk_result["risk_level"] == "MODERATE":
+    if st.button("▶ Perform Test 3"):
 
-    st.warning(
-        "MODERATE RISK: Continue monitoring."
+        st.session_state.health_test_3 = (
+            get_current_health_values()
+        )
+
+        test1 = st.session_state.health_test_1
+        test2 = st.session_state.health_test_2
+        test3 = st.session_state.health_test_3
+
+        # ----------------------------------------------------
+        # FINAL THREE-TEST AVERAGE
+        # ----------------------------------------------------
+
+        st.session_state.health_test_final = {
+
+            "heart_rate": (
+                test1["heart_rate"]
+                + test2["heart_rate"]
+                + test3["heart_rate"]
+            ) / 3,
+
+            "spo2": (
+                test1["spo2"]
+                + test2["spo2"]
+                + test3["spo2"]
+            ) / 3,
+
+            "temperature": (
+                test1["temperature"]
+                + test2["temperature"]
+                + test3["temperature"]
+            ) / 3,
+
+            "systolic_bp": (
+                test1["systolic_bp"]
+                + test2["systolic_bp"]
+                + test3["systolic_bp"]
+            ) / 3,
+
+            "diastolic_bp": (
+                test1["diastolic_bp"]
+                + test2["diastolic_bp"]
+                + test3["diastolic_bp"]
+            ) / 3
+        }
+
+        st.session_state.health_test_message = (
+            "TEST 1 + TEST 2 + TEST 3 AVERAGE USED"
+        )
+
+        st.session_state.health_test_stage = (
+            "COMPLETED"
+        )
+
+        st.rerun()
+
+
+# ------------------------------------------------------------
+# VALIDATED HEALTH DATA
+# ------------------------------------------------------------
+
+final_health_values = (
+    st.session_state.health_test_final
+)
+
+
+if final_health_values is None:
+
+    st.info(
+        "Complete the health validation test "
+        "before final AI risk assessment."
     )
 
 else:
 
     st.success(
-        "LOW RISK: No immediate risk detected."
+        st.session_state.health_test_message
     )
+
+    st.subheader(
+        "Validated Health Values"
+    )
+
+    value_col1, value_col2, value_col3, value_col4, value_col5 = (
+        st.columns(5)
+    )
+
+    with value_col1:
+
+        st.metric(
+            "Heart Rate",
+            f"{final_health_values['heart_rate']:.1f} BPM"
+        )
+
+    with value_col2:
+
+        st.metric(
+            "SpO₂",
+            f"{final_health_values['spo2']:.1f}%"
+        )
+
+    with value_col3:
+
+        st.metric(
+            "Temperature",
+            f"{final_health_values['temperature']:.1f} °C"
+        )
+
+    with value_col4:
+
+        st.metric(
+            "Systolic BP",
+            f"{final_health_values['systolic_bp']:.1f}"
+        )
+
+    with value_col5:
+
+        st.metric(
+            "Diastolic BP",
+            f"{final_health_values['diastolic_bp']:.1f}"
+        )
+
+
+    # ========================================================
+    # HEALTH MONITOR
+    # ========================================================
+
+    health_result = health_monitor.check_all(
+
+        heart_rate=final_health_values[
+            "heart_rate"
+        ],
+
+        spo2=final_health_values[
+            "spo2"
+        ],
+
+        temperature=final_health_values[
+            "temperature"
+        ],
+
+        systolic_bp=final_health_values[
+            "systolic_bp"
+        ],
+
+        diastolic_bp=final_health_values[
+            "diastolic_bp"
+        ]
+    )
+
+
+    if health_result["alert"]:
+
+        st.error(
+            "ABNORMAL VALIDATED HEALTH READING DETECTED"
+        )
+
+    else:
+
+        st.success(
+            "VALIDATED HEALTH READINGS WITHIN "
+            "CONFIGURED RANGE"
+        )
+
+
+    # ========================================================
+    # AI MODEL RISK PREDICTION
+    # ========================================================
+
+    ai_risk_result = ai_risk_scorer.predict(
+
+        heart_rate=final_health_values[
+            "heart_rate"
+        ],
+
+        spo2=final_health_values[
+            "spo2"
+        ],
+
+        systolic_bp=final_health_values[
+            "systolic_bp"
+        ],
+
+        diastolic_bp=final_health_values[
+            "diastolic_bp"
+        ],
+
+        temperature=final_health_values[
+            "temperature"
+        ],
+
+        inactivity_duration=st.session_state.get(
+            "live_inactivity_duration",
+            0
+        ),
+
+        possible_fall=st.session_state.get(
+            "live_possible_fall",
+            False
+        ),
+
+        confirmed_fall=st.session_state.get(
+            "live_confirmed_fall",
+            False
+        )
+    )
+
+    # ========================================================
+    # MULTIMODAL AI RISK PREDICTION
+    # ========================================================
+
+    esp32_sensor_data = st.session_state.get(
+        "esp32_sensor_data",
+            {}
+    )
+
+    imu_data = esp32_sensor_data.get(
+        "imu",
+        {}
+    )
+
+    multimodal_risk_result = multimodal_risk_ai.predict(
+
+        heart_rate=final_health_values[
+            "heart_rate"
+        ],
+
+        spo2=final_health_values[
+            "spo2"
+        ],
+
+        systolic_bp=final_health_values[
+            "systolic_bp"
+        ],
+
+        diastolic_bp=final_health_values[
+            "diastolic_bp"
+        ],
+
+        temperature=final_health_values[
+            "temperature"
+        ],
+
+        inactivity_duration=st.session_state.get(
+            "live_inactivity_duration",
+            0
+        ),
+
+        possible_fall=st.session_state.get(
+            "live_possible_fall",
+            False
+        ),
+
+        confirmed_fall=st.session_state.get(
+            "live_confirmed_fall",
+            False
+        ),
+
+        pre_fall_risk=st.session_state.get(
+            "live_pre_fall_risk",
+            False
+        ),
+
+        acceleration_magnitude=imu_data.get(
+            "acceleration_magnitude",
+            0.0
+        ),
+
+        gyroscope_magnitude=imu_data.get(
+            "gyroscope_magnitude",
+            0.0
+        ),
+
+        acceleration_change=imu_data.get(
+            "acceleration_change",
+            0.0
+        ),
+
+        gyroscope_change=imu_data.get(
+            "gyroscope_change",
+            0.0
+        )
+    )
+
+    # ========================================================
+    # LOG MULTIMODAL AI SAMPLE
+    # ========================================================
+
+    multimodal_logger.log_sample(
+
+        heart_rate=final_health_values[
+            "heart_rate"
+        ],
+
+        spo2=final_health_values[
+            "spo2"
+        ],
+
+        systolic_bp=final_health_values[
+            "systolic_bp"
+        ],
+
+        diastolic_bp=final_health_values[
+            "diastolic_bp"
+        ],
+
+        temperature=final_health_values[
+            "temperature"
+        ],
+
+        inactivity_duration=st.session_state.get(
+            "live_inactivity_duration",
+            0
+        ),
+
+        possible_fall=st.session_state.get(
+            "live_possible_fall",
+            False
+        ),
+
+        pre_fall_risk=st.session_state.get(
+            "live_pre_fall_risk",
+            False
+        ),
+
+        confirmed_fall=st.session_state.get(
+            "live_confirmed_fall",
+            False
+        ),
+
+        acceleration_magnitude=imu_data.get(
+            "acceleration_magnitude",
+            0.0
+        ),
+
+        gyroscope_magnitude=imu_data.get(
+            "gyroscope_magnitude",
+            0.0
+        ),
+
+        acceleration_change=imu_data.get(
+            "acceleration_change",
+            0.0
+        ),
+
+        gyroscope_change=imu_data.get(
+            "gyroscope_change",
+            0.0
+        ),
+
+        risk_class=multimodal_risk_result[
+            "risk_class"
+        ],
+
+        risk_level=multimodal_risk_result[
+            "risk_level"
+        ],
+
+        risk_confidence=multimodal_risk_result[
+            "confidence"
+        ]
+    )
+
+    # ========================================================
+    # MULTIMODAL AI RISK DISPLAY
+    # ========================================================
+
+    #st.header("Multimodal AI Risk Assessment")
+
+    if SHOW_DEVELOPMENT_SECTIONS:
+
+        mm_col1, mm_col2, mm_col3 = st.columns(3)
+
+        with mm_col1:
+
+            st.metric(
+                "AI Risk Class",
+                multimodal_risk_result["risk_class"]
+            )
+
+        with mm_col2:
+ 
+            st.metric(
+                "AI Risk Level",
+                multimodal_risk_result["risk_level"]
+            )
+
+        with mm_col3:
+
+            st.metric(
+                "AI Confidence",
+                f"{multimodal_risk_result['confidence']:.2f}%"
+            )
+
+
+        st.write("**Risk Probabilities:**")
+
+        probabilities = multimodal_risk_result["probabilities"]
+
+        for level, probability in probabilities.items():
+
+            st.write(
+                f"**{level}** : "
+                f"{probability * 100:.2f}%"
+            )
+
+
+    # ========================================================
+    # MULTIMODAL AI DECISION
+    # ========================================================
+
+    if SHOW_DEVELOPMENT_SECTIONS and multimodal_risk_result["risk_level"] == "CRITICAL":
+
+        st.error(
+            "CRITICAL RISK: Emergency verification required."
+        )
+
+    elif multimodal_risk_result["risk_level"] == "HIGH":
+
+        st.warning(
+            "HIGH RISK: Close monitoring required."
+        )
+
+    elif multimodal_risk_result["risk_level"] == "MODERATE":
+
+        st.warning(
+            "MODERATE RISK: Continue monitoring."
+        )
+
+    else:
+
+        st.success(
+            "LOW RISK: No immediate risk detected."
+        )
+
+    # ========================================================
+    # AI RISK DECISION
+    # ========================================================
+
+    if SHOW_DEVELOPMENT_SECTIONS and ai_risk_result["risk_level"] == "CRITICAL":
+
+        st.error(
+            "CRITICAL RISK: Emergency verification required."
+        )
+
+    elif ai_risk_result["risk_level"] == "HIGH":
+
+        st.warning(
+            "HIGH RISK: Close monitoring required."
+        )
+
+    elif ai_risk_result["risk_level"] == "MODERATE":
+
+        st.warning(
+            "MODERATE RISK: Continue monitoring."
+        )
+
+    else:
+
+        st.success(
+            "LOW RISK: No immediate risk detected."
+        )
 
 # ------------------------------------------------------------
 # INDIVIDUAL SENSOR STATUS
@@ -1361,23 +2155,25 @@ if health_result["alerts"]:
 
     for alert in health_result["alerts"]:
 
-        st.warning(
-            f"{alert['reason']} "
-            f"(Value: {alert['value']})"
-        )
+        reason = alert.get("reason", "Health alert")
+        value = alert.get("value")
+
+        if value is not None:
+
+            st.warning(
+                f"{reason} "
+                f"(Value: {value})"
+            )
+
+        else:
+
+            st.warning(reason)
 
 else:
 
     st.info(
         "No health threshold alerts detected."
     )
-
-
-st.caption(
-    "Health status uses software demonstration "
-    "thresholds and is not a medical diagnosis."
-)
-
 
 st.divider()
 
@@ -1418,7 +2214,7 @@ if st.button("Test Emergency System"):
 
         st.write(
             "Emergency Service:",
-            test_result["ambulance"]["status"]
+            test_result["emergency_service"]["status"]
         )
 
     except Exception as error:
@@ -1442,8 +2238,14 @@ incidents = get_incidents()
 emergency_alerts = [
     incident
     for incident in incidents
-    if incident[4] == "POSSIBLE EMERGENCY"
+    if incident[4] in ("POSSIBLE EMERGENCY", "EMERGENCY_CONFIRMED")
 ]
+
+emergency_alerts = sorted(
+    emergency_alerts,
+    key=lambda incident: incident[0],
+    reverse=True
+)
 
 if emergency_alerts:
 
@@ -1455,7 +2257,7 @@ if emergency_alerts:
         incident_reason = incident[3]
 
         st.error(
-            "POSSIBLE EMERGENCY"
+            f"{incident[4]}"
         )
 
         st.write(
@@ -1502,8 +2304,14 @@ if incidents:
     emergency_incidents = [
         incident
         for incident in incidents
-        if incident[4] == "POSSIBLE EMERGENCY"
+        if incident[4] in ("POSSIBLE EMERGENCY", "EMERGENCY_CONFIRMED")
     ]
+
+    emergency_incidents = sorted(
+        emergency_incidents,
+        key=lambda incident: incident[0],
+        reverse=True
+    )
 
     emergency_count = len(emergency_incidents)
 
@@ -1586,7 +2394,59 @@ if incidents:
                 f"**Status:** {emergency_status}"
             )
 
-    st.divider()
+            # --------------------------------------------------------
+            # AMBULANCE RESPONSE STATUS
+            # --------------------------------------------------------
+
+            ambulance_info = get_ambulance_status(
+                emergency_id
+            )
+
+            ambulance_status = ambulance_info["status"]
+
+            st.subheader("Ambulance Response")
+
+            ambulance_col1, ambulance_col2 = st.columns(2)
+
+            with ambulance_col1:
+
+                st.write(
+                    f"**Ambulance Status:** "
+                    f"{ambulance_status}"
+                )
+
+            with ambulance_col2:
+
+                if ambulance_status == "NOT_DISPATCHED":
+
+                    st.warning(
+                        "AMBULANCE DISPATCH REQUIRED"
+                    )
+
+                elif ambulance_status == "DISPATCHED":
+
+                    st.success(
+                        "AMBULANCE DISPATCHED"
+                    )
+
+                elif ambulance_status == "EN_ROUTE":
+
+                    st.info(
+                        "AMBULANCE EN ROUTE"
+                    )
+
+                elif ambulance_status == "ARRIVED":
+
+                    st.success(
+                        "AMBULANCE ARRIVED"
+                    )
+
+                else:
+
+                    st.info(
+                        f"AMBULANCE STATUS: "
+                        f"{ambulance_status}"
+                    )
 
     # --------------------------------------------------------
     # ALL INCIDENTS
