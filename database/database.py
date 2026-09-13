@@ -41,7 +41,7 @@ def save_incident(incident):
     connection = get_connection()
 
     try:
-        connection.execute(
+        cursor = connection.execute(
             """
             INSERT INTO incidents (
                 timestamp,
@@ -60,6 +60,8 @@ def save_incident(incident):
         )
 
         connection.commit()
+
+        return cursor.lastrowid
 
     finally:
         connection.close()
@@ -89,6 +91,109 @@ def get_incidents():
     finally:
         connection.close()
 
+# ============================================================
+# AMBULANCE RESPONSE STATUS
+# ============================================================
+
+def initialize_ambulance_response():
+
+    connection = get_connection()
+
+    try:
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS ambulance_response (
+                incident_id INTEGER PRIMARY KEY,
+                status TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def update_ambulance_status(
+    incident_id,
+    status
+):
+
+    initialize_ambulance_response()
+
+    from datetime import datetime
+
+    updated_at = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    connection = get_connection()
+
+    try:
+
+        connection.execute(
+            """
+            INSERT INTO ambulance_response (
+                incident_id,
+                status,
+                updated_at
+            )
+            VALUES (?, ?, ?)
+
+            ON CONFLICT(incident_id)
+            DO UPDATE SET
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                incident_id,
+                status,
+                updated_at
+            )
+        )
+
+        connection.commit()
+
+    finally:
+        connection.close()
+
+
+def get_ambulance_status(incident_id):
+
+    initialize_ambulance_response()
+
+    connection = get_connection()
+
+    try:
+
+        cursor = connection.execute(
+            """
+            SELECT
+                status,
+                updated_at
+            FROM ambulance_response
+            WHERE incident_id = ?
+            """,
+            (incident_id,)
+        )
+
+        result = cursor.fetchone()
+
+        if result:
+            return {
+                "status": result[0],
+                "updated_at": result[1]
+            }
+
+        return {
+            "status": "NOT_DISPATCHED",
+            "updated_at": None
+        }
+
+    finally:
+        connection.close()
 
 def display_incident_history():
     incidents = get_incidents()
