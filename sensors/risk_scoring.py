@@ -33,7 +33,9 @@ class RiskScoring:
 
             "possible_fall": 25,
 
-            "confirmed_fall": 40
+            "pre_fall_risk": 15,
+
+            "confirmed_fall": 50
         }
 
 
@@ -49,6 +51,7 @@ class RiskScoring:
         blood_pressure_alert=False,
         inactivity_alert=False,
         possible_fall=False,
+        pre_fall_risk=False,
         confirmed_fall=False,
         emergency_button=False
     ):
@@ -150,6 +153,20 @@ class RiskScoring:
 
         # ----------------------------------------------------
         # POSSIBLE FALL
+        # ----------------------------------------------------
+        # PRE-FALL RISK
+        # ----------------------------------------------------
+
+        if pre_fall_risk and not possible_fall and not confirmed_fall:
+
+            score += self.weights[
+                "pre_fall_risk"
+            ]
+
+            reasons.append(
+                "Pre-fall risk detected"
+            )
+
         # ----------------------------------------------------
 
         if possible_fall and not confirmed_fall:
