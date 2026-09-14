@@ -1,39 +1,35 @@
-import sqlite3
-import hashlib
-from pathlib import Path
+import os
+
+import bcrypt
+from dotenv import load_dotenv
+from supabase import create_client
 
 
 # ============================================================
-# DATABASE PATH
+# LOAD ENVIRONMENT VARIABLES
 # ============================================================
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-AUTH_DB = PROJECT_ROOT / "database" / "users.db"
+load_dotenv()
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
+
+
+if not SUPABASE_URL:
+    raise RuntimeError("SUPABASE_URL is missing from .env")
+
+if not SUPABASE_SERVICE_KEY:
+    raise RuntimeError("SUPABASE_SERVICE_KEY is missing from .env")
 
 
 # ============================================================
-# DATABASE INITIALIZATION
+# SUPABASE CONNECTION
 # ============================================================
 
-def initialize_auth_database():
-
-    connection = sqlite3.connect(AUTH_DB)
-
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            full_name TEXT NOT NULL,
-            username TEXT UNIQUE NOT NULL,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            role TEXT NOT NULL DEFAULT 'patient'
-        )
-    """)
-
-    connection.commit()
-    connection.close()
+supabase = create_client(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_KEY
+)
 
 
 # ============================================================
@@ -42,9 +38,28 @@ def initialize_auth_database():
 
 def hash_password(password):
 
-    return hashlib.sha256(
-        password.encode("utf-8")
-    ).hexdigest()
+    password_bytes = password.encode("utf-8")
+
+    hashed = bcrypt.hashpw(
+        password_bytes,
+        bcrypt.gensalt()
+    )
+
+    return hashed.decode("utf-8")
+
+
+def verify_password(password, hashed_password):
+
+    try:
+
+        return bcrypt.checkpw(
+            password.encode("utf-8"),
+            hashed_password.encode("utf-8")
+        )
+
+    except (ValueError, TypeError):
+
+        return False
 
 
 # ============================================================
@@ -59,45 +74,66 @@ def create_user(
     role="patient"
 ):
 
-    initialize_auth_database()
-
-    connection = sqlite3.connect(AUTH_DB)
-
-    cursor = connection.cursor()
-
     try:
 
-        cursor.execute("""
-            INSERT INTO users
-            (full_name, username, email, password, role)
-            VALUES (?, ?, ?, ?, ?)
-        """, (
-            full_name,
-            username,
-            email,
-            hash_password(password),
-            role
-        ))
+        existing_username = (
+            supabase
+            .table("users")
+            .select("id")
+            .eq("username", username)
+            .limit(1)
+            .execute()
+        )
 
-        connection.commit()
-
-        return True, "Account created successfully."
-
-    except sqlite3.IntegrityError as error:
-
-        if "username" in str(error).lower():
+        if existing_username.data:
 
             return False, "Username already exists."
 
-        if "email" in str(error).lower():
+
+        existing_email = (
+            supabase
+            .table("users")
+            .select("id")
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
+
+        if existing_email.data:
 
             return False, "Email already exists."
 
+
+        password_hash = hash_password(password)
+
+
+        response = (
+            supabase
+            .table("users")
+            .insert({
+                "full_name": full_name,
+                "username": username,
+                "email": email,
+                "password": password_hash,
+                "role": role
+            })
+            .execute()
+        )
+
+
+        if response.data:
+
+            return True, "Account created successfully."
+
+
         return False, "Account could not be created."
 
-    finally:
 
-        connection.close()
+    except Exception as error:
+
+        print("CREATE USER ERROR:", error)
+
+        return False, "Account could not be created."
 
 
 # ============================================================
@@ -110,68 +146,95 @@ def verify_user(
     role
 ):
 
-    initialize_auth_database()
+    try:
 
-    connection = sqlite3.connect(AUTH_DB)
+        response = (
+            supabase
+            .table("users")
+            .select(
+                "id, full_name, username, email, password, role"
+            )
+            .eq("username", username)
+            .eq("role", role)
+            .limit(1)
+            .execute()
+        )
 
-    cursor = connection.cursor()
 
-    cursor.execute("""
-        SELECT id, full_name, username, email, role
-        FROM users
-        WHERE username = ?
-        AND password = ?
-        AND role = ?
-    """, (
-        username,
-        hash_password(password),
-        role
-    ))
+        if not response.data:
 
-    user = cursor.fetchone()
+            return None
 
-    connection.close()
 
-    return user
+        user = response.data[0]
+
+
+        if not verify_password(
+            password,
+            user["password"]
+        ):
+
+            return None
+
+
+        return (
+            user["id"],
+            user["full_name"],
+            user["username"],
+            user["email"],
+            user["role"]
+        )
+
+
+    except Exception as error:
+
+        print("LOGIN ERROR:", error)
+
+        return None
 
 
 # ============================================================
 # CHECK USER
 # ============================================================
 
-def user_exists(username, email=None):
+def user_exists(
+    username,
+    email=None
+):
 
-    initialize_auth_database()
+    try:
 
-    connection = sqlite3.connect(AUTH_DB)
+        query = (
+            supabase
+            .table("users")
+            .select("id")
+            .eq("username", username)
+        )
 
-    cursor = connection.cursor()
 
-    if email:
+        if email:
 
-        cursor.execute("""
-            SELECT id
-            FROM users
-            WHERE username = ?
-            AND email = ?
-        """, (
-            username,
-            email
-        ))
+            query = query.eq(
+                "email",
+                email
+            )
 
-    else:
 
-        cursor.execute("""
-            SELECT id
-            FROM users
-            WHERE username = ?
-        """, (username,))
+        response = (
+            query
+            .limit(1)
+            .execute()
+        )
 
-    result = cursor.fetchone()
 
-    connection.close()
+        return bool(response.data)
 
-    return result is not None
+
+    except Exception as error:
+
+        print("USER EXISTS ERROR:", error)
+
+        return False
 
 
 # ============================================================
@@ -184,38 +247,51 @@ def reset_password(
     new_password
 ):
 
-    initialize_auth_database()
+    try:
 
-    connection = sqlite3.connect(AUTH_DB)
-
-    cursor = connection.cursor()
-
-    cursor.execute("""
-        UPDATE users
-        SET password = ?
-        WHERE username = ?
-        AND email = ?
-    """, (
-        hash_password(new_password),
-        username,
-        email
-    ))
-
-    connection.commit()
-
-    updated = cursor.rowcount
-
-    connection.close()
-
-    if updated == 1:
-
-        return True, "Password reset successfully."
-
-    return False, "Username and email do not match."
+        response = (
+            supabase
+            .table("users")
+            .select("id")
+            .eq("username", username)
+            .eq("email", email)
+            .limit(1)
+            .execute()
+        )
 
 
-# ============================================================
-# INITIALIZE
-# ============================================================
+        if not response.data:
 
-initialize_auth_database()
+            return False, "Username and email do not match."
+
+
+        new_hash = hash_password(
+            new_password
+        )
+
+
+        update_response = (
+            supabase
+            .table("users")
+            .update({
+                "password": new_hash
+            })
+            .eq("username", username)
+            .eq("email", email)
+            .execute()
+        )
+
+
+        if update_response.data:
+
+            return True, "Password reset successfully."
+
+
+        return False, "Password reset failed."
+
+
+    except Exception as error:
+
+        print("PASSWORD RESET ERROR:", error)
+
+        return False, "Password reset failed."

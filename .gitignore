@@ -23,3 +23,5 @@ smart_health.db
 
 # Encrypted configuration
 .enc
+.env
+database/users.db

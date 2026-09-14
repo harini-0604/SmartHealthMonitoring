@@ -1,4 +1,4 @@
-﻿opencv-python-headless==4.10.0.84
+opencv-python-headless==4.10.0.84
 mediapipe==0.10.14
 ultralytics
 streamlit
@@ -11,3 +11,5 @@ SpeechRecognition==3.17.0
 pyttsx3==2.99
 joblib
 scikit-learn
+supabase
+bcrypt
